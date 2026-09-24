@@ -33,7 +33,9 @@ const articleSchema = new mongoose.Schema({
   articleCode: { type: String, required: true, unique: true },
   brand: String,
   color: { type: String, default: '' },
+  sizeRange: { type: String, default: '6*9 (Gents)' },
   mrp: { type: Number, default: 0 },
+  purchaseRate: { type: Number, default: 0 },
   wholesaleRate: { type: Number, default: 0 },
   sellingPrice: { type: Number, default: 0 },
   pairsInPeti: { type: Number, default: 12 },
@@ -46,12 +48,14 @@ const stockSchema = new mongoose.Schema({
   articleCode: String,
   brand: String,
   color: String,
+  sizeRange: { type: String, default: '6*9 (Gents)' },
   cartons: { type: Number, default: 0 },
   pairsPerCarton: { type: Number, default: 12 },
   loosePairs: { type: Number, default: 0 },
   totalPairs: { type: Number, default: 0 },
   mrp: { type: Number, default: 0 },
   purchaseRate: { type: Number, default: 0 },
+  sellingPrice: { type: Number, default: 0 },
   lastUpdated: { type: Date, default: Date.now }
 });
 const Stock = mongoose.model('Stock', stockSchema);
@@ -62,8 +66,10 @@ const billSchema = new mongoose.Schema({
   partyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Party', required: true },
   partyName: String,
   deliveryMode: String,
-  items: Array,
+  items: Array,          // Beche gaye items
+  returnItems: Array,    // Return kiye huye items
   rawTotal: { type: Number, default: 0 },
+  returnTotal: { type: Number, default: 0 },
   discountVal: { type: Number, default: 0 },
   todayTotal: { type: Number, default: 0 },
   previousBalance: { type: Number, default: 0 },
@@ -85,7 +91,7 @@ const staffSchema = new mongoose.Schema({
 });
 const Staff = mongoose.model('Staff', staffSchema);
 
-// 6. Staff Attendance & Advance Record Schema
+// 6. Staff Attendance Record Schema
 const staffRecordSchema = new mongoose.Schema({
   staffId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff', required: true },
   date: { type: String, required: true },
@@ -129,7 +135,7 @@ app.delete('/api/parties/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- ARTICLES ROUTES ---
+// --- ARTICLES ROUTES (WITH AUTOMATIC STOCK SYNCHRONIZATION) ---
 app.get('/api/articles', async (req, res) => {
   try {
     const articles = await Article.find().sort({ articleCode: 1 });
@@ -139,67 +145,190 @@ app.get('/api/articles', async (req, res) => {
 
 app.post('/api/articles', async (req, res) => {
   try {
-    const article = new Article(req.body);
-    const saved = await article.save();
-    res.status(201).json(saved);
+    const { articleCode, brand, color, sizeRange, mrp, purchaseRate, wholesaleRate, sellingPrice, pairsInPeti, cartons, loosePairs } = req.body;
+    
+    const article = new Article({
+      articleCode,
+      brand,
+      color,
+      sizeRange,
+      mrp: parseFloat(mrp || 0),
+      purchaseRate: parseFloat(purchaseRate || 0),
+      wholesaleRate: parseFloat(wholesaleRate || sellingPrice || 0),
+      sellingPrice: parseFloat(sellingPrice || wholesaleRate || 0),
+      pairsInPeti: parseInt(pairsInPeti || 12)
+    });
+    const savedArticle = await article.save();
+
+    // Auto-Sync to Stock Collection
+    const c = parseInt(cartons || 0);
+    const l = parseInt(loosePairs || 0);
+    const ppt = parseInt(pairsInPeti || 12);
+    const totalPairs = (c * ppt) + l;
+
+    let stockItem = await Stock.findOne({ articleCode });
+    if (stockItem) {
+      stockItem.brand = brand || stockItem.brand;
+      stockItem.color = color || stockItem.color;
+      stockItem.sizeRange = sizeRange || stockItem.sizeRange;
+      stockItem.mrp = parseFloat(mrp || stockItem.mrp);
+      stockItem.purchaseRate = parseFloat(purchaseRate || stockItem.purchaseRate);
+      stockItem.sellingPrice = parseFloat(sellingPrice || wholesaleRate || stockItem.sellingPrice);
+      stockItem.cartons += c;
+      stockItem.loosePairs += l;
+      stockItem.totalPairs += totalPairs;
+      stockItem.lastUpdated = Date.now();
+      await stockItem.save();
+    } else {
+      await Stock.create({
+        articleCode,
+        brand,
+        color,
+        sizeRange,
+        cartons: c,
+        pairsPerCarton: ppt,
+        loosePairs: l,
+        totalPairs,
+        mrp: parseFloat(mrp || 0),
+        purchaseRate: parseFloat(purchaseRate || 0),
+        sellingPrice: parseFloat(sellingPrice || wholesaleRate || 0)
+      });
+    }
+
+    res.status(201).json(savedArticle);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/articles/:id', async (req, res) => {
   try {
-    const updated = await Article.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(updated);
+    const { articleCode, brand, color, sizeRange, mrp, purchaseRate, wholesaleRate, sellingPrice, pairsInPeti, cartons, loosePairs } = req.body;
+    
+    const updatedArticle = await Article.findByIdAndUpdate(req.params.id, {
+      brand, color, sizeRange,
+      mrp: parseFloat(mrp || 0),
+      purchaseRate: parseFloat(purchaseRate || 0),
+      wholesaleRate: parseFloat(wholesaleRate || sellingPrice || 0),
+      sellingPrice: parseFloat(sellingPrice || wholesaleRate || 0),
+      pairsInPeti: parseInt(pairsInPeti || 12)
+    }, { new: true });
+
+    // Sync Update to Stock Record
+    const stockItem = await Stock.findOne({ articleCode: updatedArticle.articleCode });
+    if (stockItem) {
+      stockItem.brand = brand;
+      stockItem.color = color;
+      stockItem.sizeRange = sizeRange;
+      stockItem.mrp = parseFloat(mrp || 0);
+      stockItem.purchaseRate = parseFloat(purchaseRate || 0);
+      stockItem.sellingPrice = parseFloat(sellingPrice || wholesaleRate || 0);
+      if (cartons !== undefined) stockItem.cartons = parseInt(cartons || 0);
+      if (loosePairs !== undefined) stockItem.loosePairs = parseInt(loosePairs || 0);
+      stockItem.totalPairs = (stockItem.cartons * stockItem.pairsPerCarton) + stockItem.loosePairs;
+      stockItem.lastUpdated = Date.now();
+      await stockItem.save();
+    }
+
+    res.json(updatedArticle);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/articles/:id', async (req, res) => {
   try {
-    await Article.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Article deleted' });
+    const article = await Article.findById(req.params.id);
+    if (article) {
+      await Stock.deleteOne({ articleCode: article.articleCode });
+      await Article.findByIdAndDelete(req.params.id);
+    }
+    res.json({ message: 'Article and synced stock deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- STOCK ROUTES ---
 app.get('/api/stock', async (req, res) => {
   try {
-    const stocks = await Stock.find();
+    const stocks = await Stock.find().sort({ articleCode: 1 });
     res.json(stocks);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/stock/inward', async (req, res) => {
   try {
-    const { articleCode, brand, color, cartons, pairsPerCarton, loosePairs, mrp, purchaseRate } = req.body;
-    const totalPairs = (parseInt(cartons || 0) * parseInt(pairsPerCarton || 12)) + parseInt(loosePairs || 0);
+    const { articleCode, brand, color, sizeRange, cartons, pairsPerCarton, loosePairs, mrp, purchaseRate, sellingPrice } = req.body;
+    const c = parseInt(cartons || 0);
+    const l = parseInt(loosePairs || 0);
+    const ppt = parseInt(pairsPerCarton || 12);
+    const totalPairs = (c * ppt) + l;
 
     let stockItem = await Stock.findOne({ articleCode });
     if (stockItem) {
-      stockItem.cartons += parseInt(cartons || 0);
-      stockItem.loosePairs += parseInt(loosePairs || 0);
+      stockItem.brand = brand || stockItem.brand;
+      stockItem.color = color || stockItem.color;
+      stockItem.sizeRange = sizeRange || stockItem.sizeRange;
+      stockItem.cartons += c;
+      stockItem.loosePairs += l;
       stockItem.totalPairs += totalPairs;
+      stockItem.mrp = parseFloat(mrp || stockItem.mrp);
+      stockItem.purchaseRate = parseFloat(purchaseRate || stockItem.purchaseRate);
+      stockItem.sellingPrice = parseFloat(sellingPrice || stockItem.sellingPrice);
       stockItem.lastUpdated = Date.now();
       await stockItem.save();
     } else {
       stockItem = new Stock({
-        articleCode, brand, color,
-        cartons: parseInt(cartons || 0),
-        pairsPerCarton: parseInt(pairsPerCarton || 12),
-        loosePairs: parseInt(loosePairs || 0),
+        articleCode, brand, color, sizeRange,
+        cartons: c,
+        pairsPerCarton: ppt,
+        loosePairs: l,
         totalPairs,
         mrp: parseFloat(mrp || 0),
-        purchaseRate: parseFloat(purchaseRate || 0)
+        purchaseRate: parseFloat(purchaseRate || 0),
+        sellingPrice: parseFloat(sellingPrice || 0)
       });
       await stockItem.save();
     }
+
+    // Sync purchaseRate / sellingPrice back to Article
+    await Article.findOneAndUpdate({ articleCode }, {
+      brand: brand || undefined,
+      color: color || undefined,
+      sizeRange: sizeRange || undefined,
+      mrp: parseFloat(mrp || 0),
+      purchaseRate: parseFloat(purchaseRate || 0),
+      sellingPrice: parseFloat(sellingPrice || 0),
+      wholesaleRate: parseFloat(sellingPrice || 0)
+    });
+
     res.status(200).json(stockItem);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/stock/:id', async (req, res) => {
   try {
-    const { cartons, pairsPerCarton, loosePairs } = req.body;
-    const totalPairs = (parseInt(cartons || 0) * parseInt(pairsPerCarton || 12)) + parseInt(loosePairs || 0);
-    const updated = await Stock.findByIdAndUpdate(req.params.id, { ...req.body, totalPairs }, { new: true });
+    const { cartons, pairsPerCarton, loosePairs, purchaseRate, sellingPrice, mrp } = req.body;
+    
+    const currentStock = await Stock.findById(req.params.id);
+    if (!currentStock) return res.status(404).json({ error: 'Stock item not found' });
+
+    const c = cartons !== undefined ? parseInt(cartons) : currentStock.cartons;
+    const l = loosePairs !== undefined ? parseInt(loosePairs) : currentStock.loosePairs;
+    const ppt = pairsPerCarton !== undefined ? parseInt(pairsPerCarton) : currentStock.pairsPerCarton;
+    const totalPairs = (c * ppt) + l;
+
+    const updated = await Stock.findByIdAndUpdate(
+      req.params.id, 
+      { ...req.body, cartons: c, loosePairs: l, pairsPerCarton: ppt, totalPairs, lastUpdated: Date.now() }, 
+      { new: true }
+    );
+
+    // Sync updated price back to Article
+    if (updated && updated.articleCode) {
+      await Article.findOneAndUpdate({ articleCode: updated.articleCode }, {
+        purchaseRate: updated.purchaseRate,
+        sellingPrice: updated.sellingPrice,
+        wholesaleRate: updated.sellingPrice,
+        mrp: updated.mrp
+      });
+    }
+
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -232,14 +361,40 @@ app.post('/api/bills', async (req, res) => {
     const lastBill = await Bill.findOne().sort({ billNo: -1 });
     const billNo = lastBill ? lastBill.billNo + 1 : 1001;
 
-    const newBill = new Bill({
-      billNo,
-      ...req.body
-    });
-
+    const newBill = new Bill({ billNo, ...req.body });
     const savedBill = await newBill.save();
 
-    // Update Party Current Ledger Due Balance
+    // 1. Stock Adjustment for New Sold Items (Deduct Stock if article exists in Stock)
+    if (req.body.items && Array.isArray(req.body.items)) {
+      for (let item of req.body.items) {
+        if (item.articleCode && item.totalPairs > 0) {
+          const st = await Stock.findOne({ articleCode: item.articleCode });
+          if (st) {
+            st.totalPairs = Math.max(0, st.totalPairs - item.totalPairs);
+            st.cartons = Math.floor(st.totalPairs / (st.pairsPerCarton || 12));
+            st.loosePairs = st.totalPairs % (st.pairsPerCarton || 12);
+            await st.save();
+          }
+        }
+      }
+    }
+
+    // 2. Stock Adjustment for Return Items (Add Back Stock if article exists in Stock)
+    if (req.body.returnItems && Array.isArray(req.body.returnItems)) {
+      for (let rItem of req.body.returnItems) {
+        if (rItem.articleCode && rItem.totalPairs > 0) {
+          const st = await Stock.findOne({ articleCode: rItem.articleCode });
+          if (st) {
+            st.totalPairs += rItem.totalPairs;
+            st.cartons = Math.floor(st.totalPairs / (st.pairsPerCarton || 12));
+            st.loosePairs = st.totalPairs % (st.pairsPerCarton || 12);
+            await st.save();
+          }
+        }
+      }
+    }
+
+    // 3. Update Party Ledger Dues
     if (req.body.partyId) {
       await Party.findByIdAndUpdate(req.body.partyId, {
         currentBalance: req.body.dueBalance
@@ -295,35 +450,6 @@ app.delete('/api/staff/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- STAFF RECORDS ROUTES ---
-app.get('/api/staff/records/:staffId', async (req, res) => {
-  try {
-    const records = await StaffRecord.find({ staffId: req.params.staffId }).sort({ date: -1 });
-    res.json(records);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/staff/records', async (req, res) => {
-  try {
-    const record = new StaffRecord(req.body);
-    const saved = await record.save();
-    res.status(201).json(saved);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.put('/api/staff/records/:id', async (req, res) => {
-  try {
-    const updated = await StaffRecord.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/staff/records/:id', async (req, res) => {
-  try {
-    await StaffRecord.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Record deleted' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
+// SERVER LISTEN
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Super Gold ERP Server running on port ${PORT}`));
