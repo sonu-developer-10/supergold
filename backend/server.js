@@ -86,8 +86,11 @@ const Bill = mongoose.model('Bill', billSchema);
 const staffSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: String,
+  role: { type: String, default: 'Helper' },
   monthlySalary: { type: Number, default: 0 },
-  joiningDate: { type: Date, default: Date.now }
+  joiningDate: { type: Date, default: Date.now },
+  active: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now }
 });
 const Staff = mongoose.model('Staff', staffSchema);
 
@@ -95,11 +98,33 @@ const Staff = mongoose.model('Staff', staffSchema);
 const staffRecordSchema = new mongoose.Schema({
   staffId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff', required: true },
   date: { type: String, required: true },
-  status: { type: String, enum: ['Present', 'Absent', 'Half-Day'], default: 'Present' },
+  status: { type: String, enum: ['Present', 'Absent', 'Half-Day', 'Half Day'], default: 'Present' },
   advanceAmount: { type: Number, default: 0 },
-  remark: String
+  remark: String,
+  createdAt: { type: Date, default: Date.now }
 });
 const StaffRecord = mongoose.model('StaffRecord', staffRecordSchema);
+
+// 7. Staff Salary Payment Schema
+const staffSalaryPaymentSchema = new mongoose.Schema({
+  staffId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff', required: true },
+  month: { type: String, required: true },
+  date: { type: String, required: true },
+  amount: { type: Number, default: 0 },
+  remark: String,
+  createdAt: { type: Date, default: Date.now }
+});
+const StaffSalaryPayment = mongoose.model('StaffSalaryPayment', staffSalaryPaymentSchema);
+
+// 8. General Business Expense Schema
+const expenseSchema = new mongoose.Schema({
+  date: { type: String, required: true },
+  category: { type: String, default: 'General' },
+  amount: { type: Number, default: 0 },
+  description: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now }
+});
+const Expense = mongoose.model('Expense', expenseSchema);
 
 // ==================== API ROUTES ====================
 
@@ -419,25 +444,40 @@ app.delete('/api/bills/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- STAFF ROUTES ---
+// --- STAFF & EXPENSE ROUTES ---
 app.get('/api/staff', async (req, res) => {
   try {
-    const staff = await Staff.find().sort({ joiningDate: -1 });
+    const staff = await Staff.find().sort({ active: -1, joiningDate: -1 });
     res.json(staff);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/staff', async (req, res) => {
   try {
-    const newStaff = new Staff(req.body);
-    const saved = await newStaff.save();
+    const saved = await new Staff({
+      name: req.body.name,
+      phone: req.body.phone || '',
+      role: req.body.role || 'Helper',
+      monthlySalary: Number(req.body.monthlySalary || 0),
+      joiningDate: req.body.joiningDate || Date.now(),
+      active: req.body.active !== false
+    }).save();
     res.status(201).json(saved);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/staff/:id', async (req, res) => {
   try {
-    const updated = await Staff.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const payload = {
+      name: req.body.name,
+      phone: req.body.phone || '',
+      role: req.body.role || 'Helper',
+      monthlySalary: Number(req.body.monthlySalary || 0),
+      active: req.body.active !== false
+    };
+    if (req.body.joiningDate) payload.joiningDate = req.body.joiningDate;
+    const updated = await Staff.findByIdAndUpdate(req.params.id, payload, { new: true, runValidators: true });
+    if (!updated) return res.status(404).json({ error: 'Staff not found' });
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -446,7 +486,102 @@ app.delete('/api/staff/:id', async (req, res) => {
   try {
     await Staff.findByIdAndDelete(req.params.id);
     await StaffRecord.deleteMany({ staffId: req.params.id });
-    res.json({ message: 'Staff deleted' });
+    await StaffSalaryPayment.deleteMany({ staffId: req.params.id });
+    res.json({ message: 'Staff and staff records deleted' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/staff-records', async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.month) filter.date = { $regex: `^${req.query.month}-` };
+    const records = await StaffRecord.find(filter).sort({ date: 1, createdAt: 1 });
+    res.json(records);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/staff/:id/attendance', async (req, res) => {
+  try {
+    const { date, status, remark } = req.body;
+    if (!date || !status) return res.status(400).json({ error: 'date and status are required' });
+    const normalizedStatus = status === 'Half Day' ? 'Half-Day' : status;
+    if (!['Present', 'Absent', 'Half-Day'].includes(normalizedStatus)) {
+      return res.status(400).json({ error: 'Invalid attendance status' });
+    }
+    const record = await StaffRecord.findOneAndUpdate(
+      { staffId: req.params.id, date, advanceAmount: { $in: [0, null] } },
+      { $set: { status: normalizedStatus, remark: remark || '', advanceAmount: 0 } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    res.json(record);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/staff/:id/advance', async (req, res) => {
+  try {
+    const { date, amount, reason } = req.body;
+    const numericAmount = Number(amount || 0);
+    if (!date || numericAmount <= 0) return res.status(400).json({ error: 'date and positive amount are required' });
+    const record = await new StaffRecord({
+      staffId: req.params.id,
+      date,
+      status: 'Present',
+      advanceAmount: numericAmount,
+      remark: reason || 'Staff Advance'
+    }).save();
+    res.status(201).json(record);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/staff-salary-payments', async (req, res) => {
+  try {
+    const filter = req.query.month ? { month: req.query.month } : {};
+    const payments = await StaffSalaryPayment.find(filter).sort({ date: -1, createdAt: -1 });
+    res.json(payments);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/staff/:id/salary-payment', async (req, res) => {
+  try {
+    const { month, date, amount, remark } = req.body;
+    const numericAmount = Number(amount || 0);
+    if (!month || !date || numericAmount <= 0) {
+      return res.status(400).json({ error: 'month, date and positive amount are required' });
+    }
+    const payment = await new StaffSalaryPayment({
+      staffId: req.params.id, month, date, amount: numericAmount, remark: remark || ''
+    }).save();
+    res.status(201).json(payment);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/expenses', async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.month) filter.date = { $regex: `^${req.query.month}-` };
+    const expenses = await Expense.find(filter).sort({ date: -1, createdAt: -1 });
+    res.json(expenses);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/expenses', async (req, res) => {
+  try {
+    const amount = Number(req.body.amount || 0);
+    if (!req.body.date || amount <= 0) return res.status(400).json({ error: 'date and positive amount are required' });
+    const expense = await new Expense({
+      date: req.body.date,
+      category: req.body.category || 'General',
+      amount,
+      description: req.body.description || ''
+    }).save();
+    res.status(201).json(expense);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/expenses/:id', async (req, res) => {
+  try {
+    await Expense.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Expense deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
