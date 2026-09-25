@@ -8,7 +8,7 @@ import {
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
-const API_BASE = 'https://supergold.onrender.com'; // ye new dala hai
+const API_BASE = 'https://supergold-backend.onrender.com'; // ye new dala hai
 
 const DEFAULT_SIZE_RANGES = [
   '6*10 (Gents)', '6*9 (Gents)', '7*10 (Gents)', 
