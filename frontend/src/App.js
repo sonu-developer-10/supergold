@@ -2012,9 +2012,9 @@ function PartiesTab({ parties, onPartyAdded }) {
           <div><label className="block text-xs font-bold text-slate-300 mb-1">Party Name *</label><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white font-bold" value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} required /></div>
           <div><label className="block text-xs font-bold text-slate-300 mb-1">City / Location</label><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" value={form.city} onChange={(e) => setForm({...form, city: e.target.value})} /></div>
           <div><label className="block text-xs font-bold text-slate-300 mb-1">Phone Number</label><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" value={form.phone} onChange={(e) => setForm({...form, phone: e.target.value})} /></div>
-          {!editingId && (
+          
             <div><label className="block text-xs font-bold text-slate-300 mb-1">Opening Balance (₹)</label><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-rose-400 font-bold" type="number" value={form.openingBalance} onChange={(e) => setForm({...form, openingBalance: e.target.value})} /></div>
-          )}
+          
           <div className="flex gap-2 pt-2">
             {editingId && <button type="button" onClick={() => { setEditingId(null); setForm({ name: '', phone: '', city: '', openingBalance: 0 }); }} className="w-1/3 bg-slate-800 text-slate-300 py-2.5 rounded-xl font-bold text-xs">Cancel</button>}
             <button type="submit" className="flex-1 bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 py-2.5 rounded-xl font-black text-xs shadow-lg">
