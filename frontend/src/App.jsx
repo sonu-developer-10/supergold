@@ -540,7 +540,7 @@ useEffect(() => {
         {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'staff' && <StaffTab staffList={staffList} onStaffUpdated={fetchStaff} />}
         {activeTab === 'invoiceView' && (
           <div className="flex justify-center w-full my-4">
-            <InvoiceView billId={selectedBillId} bills={bills} parties={parties} onBack={() => setActiveTab('dashboard')} />
+            <InvoiceView billId={selectedBillId} bills={bills} parties={parties} onBack={() => setActiveTab('billing')} />
           </div>
         )}
       </main>
