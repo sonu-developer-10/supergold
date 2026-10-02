@@ -1840,12 +1840,24 @@ const handleDownloadPdf = async () => {
       scale: 2,
       backgroundColor: '#ffffff',
       useCORS: true,
+      logging: false,
       onclone: (clonedDocument) => {
         clonedDocument
           .querySelectorAll('[data-pdf-hide="true"]')
           .forEach((el) => {
             el.style.display = 'none';
           });
+
+        const invoice = clonedDocument.getElementById('invoice-print-area');
+
+        if (invoice) {
+          // PDF ke liye unnecessary screen-only spacing remove
+          invoice.style.boxShadow = 'none';
+          invoice.style.borderRadius = '0';
+          invoice.style.maxWidth = 'none';
+          invoice.style.width = '100%';
+          invoice.style.margin = '0';
+        }
       }
     });
 
@@ -1855,54 +1867,67 @@ const handleDownloadPdf = async () => {
     const pageHeight = pdf.internal.pageSize.getHeight();
 
     const margin = 8;
-    const pdfWidth = pageWidth - margin * 2;
-    const pdfUsableHeight = pageHeight - margin * 2;
 
-    const fullPdfHeight =
-      (canvas.height * pdfWidth) / canvas.width;
+    const usableWidth = pageWidth - (margin * 2);
+    const usableHeight = pageHeight - (margin * 2);
 
     /*
-     * Agar invoice sirf thoda sa A4 se bada hai,
-     * to usko ek page mein thoda shrink karke fit karo.
-     *
-     * Isse Net Balance Due akela next page par nahi jayega.
+     * Canvas ko A4 width mein fit karne par
+     * invoice ki actual PDF height.
      */
-    const smallOverflowLimit = pdfUsableHeight * 1.06;
+    const naturalPdfHeight =
+      (canvas.height * usableWidth) / canvas.width;
 
-    if (fullPdfHeight <= smallOverflowLimit) {
-      const fitHeight = Math.min(fullPdfHeight, pdfUsableHeight);
+    /*
+     * Agar invoice A4 se sirf thoda bada hai,
+     * to poora invoice ek page mein fit kar do.
+     *
+     * Isse Net Balance Due next page par nahi jayega.
+     */
+    const onePageMaximum = usableHeight * 1.12;
+
+    if (naturalPdfHeight <= onePageMaximum) {
+      const scale =
+        Math.min(1, usableHeight / naturalPdfHeight);
+
+      const finalWidth = usableWidth * scale;
+      const finalHeight = naturalPdfHeight * scale;
+
+      const x = (pageWidth - finalWidth) / 2;
 
       pdf.addImage(
-        canvas.toDataURL('image/png'),
-        'PNG',
+        canvas.toDataURL('image/jpeg', 0.95),
+        'JPEG',
+        x,
         margin,
-        margin,
-        pdfWidth,
-        fitHeight
+        finalWidth,
+        finalHeight
       );
+
     } else {
       /*
        * Invoice genuinely bada hai.
-       * Is case mein canvas ko proper non-overlapping
-       * pages mein split karo.
+       * Ab proper multiple-page slicing.
        */
+
       const pageCanvasHeight = Math.floor(
-        (canvas.width * pdfUsableHeight) / pdfWidth
+        (canvas.width * usableHeight) / usableWidth
       );
 
       let offsetY = 0;
       let pageIndex = 0;
 
       while (offsetY < canvas.height) {
-        const remainingCanvasHeight =
+        const remainingHeight =
           canvas.height - offsetY;
 
         const sliceHeight = Math.min(
           pageCanvasHeight,
-          remainingCanvasHeight
+          remainingHeight
         );
 
-        const pageCanvas = document.createElement('canvas');
+        const pageCanvas =
+          document.createElement('canvas');
 
         pageCanvas.width = canvas.width;
         pageCanvas.height = sliceHeight;
@@ -1910,6 +1935,7 @@ const handleDownloadPdf = async () => {
         const ctx = pageCanvas.getContext('2d');
 
         ctx.fillStyle = '#ffffff';
+
         ctx.fillRect(
           0,
           0,
@@ -1925,8 +1951,8 @@ const handleDownloadPdf = async () => {
           sliceHeight,
           0,
           0,
-          pageCanvas.width,
-          pageCanvas.height
+          canvas.width,
+          sliceHeight
         );
 
         if (pageIndex > 0) {
@@ -1934,14 +1960,14 @@ const handleDownloadPdf = async () => {
         }
 
         const imageHeight =
-          (sliceHeight * pdfWidth) / canvas.width;
+          (sliceHeight * usableWidth) / canvas.width;
 
         pdf.addImage(
-          pageCanvas.toDataURL('image/png'),
-          'PNG',
+          pageCanvas.toDataURL('image/jpeg', 0.95),
+          'JPEG',
           margin,
           margin,
-          pdfWidth,
+          usableWidth,
           imageHeight
         );
 
