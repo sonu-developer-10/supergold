@@ -3082,7 +3082,7 @@ function PartiesTab({ parties, onPartyAdded }) {
                   <td className="p-2.5 font-bold text-white">{p.name}</td>
                   <td className="p-2.5 text-slate-300">{p.city || '-'}</td>
                   <td className="p-2.5 text-slate-300">{p.phone || '-'}</td>
-                  <td className="p-2.5 font-black text-rose-400">₹{p.currentBalance || 0}</td>
+                  <td className="p-2.5 font-black text-rose-400">₹{Number(p.currentBalance || 0).toFixed(2)}</td>
                   <td className="p-2.5 text-center flex justify-center gap-2">
                     <button onClick={() => handleEdit(p)} className="text-amber-400 hover:text-amber-300"><Edit className="w-4 h-4" /></button>
                     <button onClick={() => handleDelete(p._id)} className="text-rose-400 hover:text-rose-300"><Trash2 className="w-4 h-4" /></button>
