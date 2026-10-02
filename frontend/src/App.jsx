@@ -340,7 +340,7 @@ useEffect(() => {
 }, [activeTab]);
   const [showUserManager, setShowUserManager] = useState(false);
   const [selectedBillId, setSelectedBillId] = useState(null);
-
+  const [invoiceReturnTab, setInvoiceReturnTab] = useState('billing');
   const [parties, setParties] = useState([]);
   const [articles, setArticles] = useState([]);
   const [bills, setBills] = useState([]);
@@ -408,13 +408,15 @@ useEffect(() => {
   const fetchStaff = () => apiFetch(`${API_BASE}/staff`).then(r => r.json()).then(d => setStaffList(Array.isArray(d) ? d : []));
 
   const handleOpenInvoice = (billId) => {
-    setSelectedBillId(billId);
-    if (user.role !== 'staff') {
-      setActiveTab('invoiceView');
-    } else {
-      window.location.hash = `#invoice-${billId}`;
-    }
-  };
+  setSelectedBillId(billId);
+
+  if (user.role !== 'staff') {
+    setInvoiceReturnTab(activeTab);
+    setActiveTab('invoiceView');
+  } else {
+    window.location.hash = `#invoice-${billId}`;
+  }
+};
 
   const isStaffRoute = user.role === 'staff';
   const isSingleInvoiceRoute = route.startsWith('#invoice-');
@@ -540,7 +542,7 @@ useEffect(() => {
         {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'staff' && <StaffTab staffList={staffList} onStaffUpdated={fetchStaff} />}
         {activeTab === 'invoiceView' && (
           <div className="flex justify-center w-full my-4">
-            <InvoiceView billId={selectedBillId} bills={bills} parties={parties} onBack={() => setActiveTab('billing')} />
+            <InvoiceView billId={selectedBillId} bills={bills} parties={parties} onBack={() => setActiveTab(invoiceReturnTab)} />
           </div>
         )}
       </main>
@@ -642,88 +644,7 @@ function EditBillModal({ bill, parties, articles, sizeRanges, onClose, onSaved }
   const [advancePaid, setAdvancePaid] = useState(String(Number(bill.advancePaid || 0)));
   const [saving, setSaving] = useState(false);
 
-  const BILLING_DRAFT_KEY = 'supergold_billing_draft';
-
-const [draftLoaded, setDraftLoaded] = useState(false);
-
-useEffect(() => {
-  try {
-    const savedDraft = localStorage.getItem(BILLING_DRAFT_KEY);
-
-    if (savedDraft) {
-      const draft = JSON.parse(savedDraft);
-
-      setSelectedParty(draft.selectedParty || '');
-
-      if (draft.selectedParty) {
-        const savedParty = parties.find(
-          p => String(p._id) === String(draft.selectedParty)
-        );
-        setPartyInfo(savedParty || null);
-      }
-
-      setDiscountAmount(draft.discountAmount ?? '0');
-      setItems(
-        Array.isArray(draft.items) && draft.items.length
-          ? draft.items
-          : [{
-              articleCode: '',
-              isCustom: false,
-              size: '6*9 (Gents)',
-              color: '',
-              cartons: 0,
-              loosePairs: 0,
-              totalPairs: 0,
-              mrp: 0,
-              discountPercent: 0,
-              rate: 0,
-              totalAmount: 0
-            }]
-      );
-
-      setReturnItems(Array.isArray(draft.returnItems) ? draft.returnItems : []);
-      setCashPaid(draft.cashPaid ?? '');
-      setOnlinePaid(draft.onlinePaid ?? '');
-      setAdvancePaid(draft.advancePaid ?? '');
-    }
-  } catch (err) {
-    console.error('Billing draft restore failed:', err);
-  } finally {
-    setDraftLoaded(true);
-  }
-}, []);
-
-useEffect(() => {
-  if (!draftLoaded) return;
-
-  try {
-    const draft = {
-      selectedParty,
-      discountAmount,
-      items,
-      returnItems,
-      cashPaid,
-      onlinePaid,
-      advancePaid
-    };
-
-    localStorage.setItem(
-      BILLING_DRAFT_KEY,
-      JSON.stringify(draft)
-    );
-  } catch (err) {
-    console.error('Billing draft save failed:', err);
-  }
-}, [
-  draftLoaded,
-  selectedParty,
-  discountAmount,
-  items,
-  returnItems,
-  cashPaid,
-  onlinePaid,
-  advancePaid
-]);
+  
 
   const updateSale = (index, field, value) => {
     setItems((current) => current.map((row, i) => {
@@ -1091,7 +1012,9 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
                   <td className="p-3">{index + 1}</td>
                   <td className="p-3 font-bold text-white">#{b.billNo}</td>
                   <td className="p-3 text-slate-400">{new Date(b.billDate || Date.now()).toLocaleDateString()}</td>
-                  <td className="p-3 font-semibold text-slate-200">{b.partyName}</td>
+                  <td className="p-3 font-semibold text-slate-200">{b.partyName ||
+    parties.find(p => String(p._id) === String(b.partyId))?.name ||
+    ''}</td>
                   <td className="p-3 font-bold text-amber-300">₹{Number(b.todayTotal || 0).toFixed(2)}</td>
                   <td className="p-3 text-emerald-400 font-bold">
                     <div>₹{Number(b.amountPaid || 0).toFixed(2)}</div>
@@ -1238,16 +1161,47 @@ useEffect(() => {
 ]);
 
   const handlePartyDropdownChange = (e) => {
-    const val = e.target.value;
-    if (val === 'ADD_NEW_PARTY_MODAL') {
-      setShowPartyModal(true);
-    } else {
-      setSelectedParty(val);
-      const p = parties.find((party) => party._id === val);
-      setPartyInfo(p || null);
-      setShowLastBills(false);
-    }
-  };
+  const val = e.target.value;
+
+  if (val === 'ADD_NEW_PARTY_MODAL') {
+    setShowPartyModal(true);
+    return;
+  }
+
+  // Sirf tab draft clear hoga jab
+  // ek selected party se doosri selected party par change karein.
+  // Party ko blank karne par draft delete nahi hoga.
+  if (selectedParty && val && String(selectedParty) !== String(val)) {
+    localStorage.removeItem(BILLING_DRAFT_KEY);
+
+    setDiscountAmount('0');
+    setItems([
+      {
+        articleCode: '',
+        isCustom: false,
+        size: '6*9 (Gents)',
+        color: '',
+        cartons: 0,
+        loosePairs: 0,
+        totalPairs: 0,
+        mrp: 0,
+        discountPercent: 0,
+        rate: 0,
+        totalAmount: 0
+      }
+    ]);
+    setReturnItems([]);
+    setCashPaid('');
+    setOnlinePaid('');
+    setAdvancePaid('');
+  }
+
+  setSelectedParty(val);
+
+  const p = parties.find((party) => String(party._id) === String(val));
+  setPartyInfo(p || null);
+  setShowLastBills(false);
+};
 
   const selectedPartyBills = selectedParty && Array.isArray(bills)
     ? bills.filter((bill) => String(bill.partyId) === String(selectedParty)).sort((a, b) => new Date(b.billDate) - new Date(a.billDate))
@@ -1647,7 +1601,24 @@ useEffect(() => {
                       />
                     </td>
                     <td className="p-2.5"><input className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-amber-300 font-bold" type="text" min="0" max="100" step="0.01" placeholder="%" value={item.discountPercent} onChange={(e) => handleItemChange(idx, 'discountPercent', e.target.value)} /></td>
-                    <td className="p-2.5"><input className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold" type="text" min="0" step="0.01" placeholder="Rate" value={Number(item.rate).toFixed(2)} onChange={(e) => handleItemChange(idx, 'rate', e.target.value)} required /></td>
+                    <td className="p-2.5">
+  <input
+    className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
+    type="text"
+    inputMode="decimal"
+    placeholder="Rate"
+    value={item.rate ?? ''}
+    onChange={(e) => {
+      const value = e.target.value;
+
+      // Sirf numbers + ek decimal point allow
+      if (/^\d*\.?\d*$/.test(value)) {
+        handleItemChange(idx, 'rate', value);
+      }
+    }}
+    required
+  />
+</td>
 
                     <td className="p-2.5 font-black text-amber-400">₹{item.totalAmount}</td>
                     <td className="p-2.5 text-center">
@@ -1758,7 +1729,7 @@ useEffect(() => {
           </div>
 
           <div className="bg-slate-900/90 p-4 rounded-xl border border-slate-800 flex flex-col justify-center space-y-2">
-            <div className="flex justify-between text-xs text-slate-400"><span>Sale Subtotal:</span><span>₹{rawTotal}</span></div>
+            <div className="flex justify-between text-xs text-slate-400"><span>Sale Subtotal:</span><span>₹{Number(rawTotal).toFixed(2)}</span></div>
             {returnTotal > 0 && (
               <div className="flex justify-between text-xs text-amber-400 font-bold"><span>Less Return Deduction:</span><span>- ₹{returnTotal}</span></div>
             )}
@@ -2161,15 +2132,15 @@ const handleSendToSelected = (phone, type = 'invoice') => {
 </button>
           </div>
           <div className="w-full sm:w-64 space-y-1 text-right">
-            <div className="flex justify-between text-slate-600"><span>Sale Subtotal:</span><span>₹{bill.rawTotal}</span></div>
+            <div className="flex justify-between text-slate-600"><span>Sale Subtotal:</span><span>₹{Number(bill.rawTotal).toFixed(2)}</span></div>
             {bill.returnTotal > 0 && (
-              <div className="flex justify-between text-amber-700 font-bold"><span>Return Adjustment:</span><span>- ₹{bill.returnTotal}</span></div>
+              <div className="flex justify-between text-amber-700 font-bold"><span>Return Adjustment:</span><span>- ₹{Number(bill.returnTotal).toFixed(2)}</span></div>
             )}
             {bill.discountVal > 0 && (
-              <div className="flex justify-between text-purple-700 font-bold"><span>Discount:</span><span>- ₹{bill.discountVal}</span></div>
+              <div className="flex justify-between text-purple-700 font-bold"><span>Discount:</span><span>- ₹{Number(bill.discountVal).toFixed(2)}</span></div>
             )}
-            <div className="flex justify-between text-slate-800 font-black text-sm border-t pt-1"><span>Today Net Total:</span><span>₹{bill.todayTotal}</span></div>
-            <div className="flex justify-between text-slate-600"><span>Previous Balance:</span><span>₹{bill.previousBalance}</span></div>
+            <div className="flex justify-between text-slate-800 font-black text-sm border-t pt-1"><span>Today Net Total:</span><span>₹{Number(bill.todayTotal).toFixed(2)}</span></div>
+            <div className="flex justify-between text-slate-600"><span>Previous Balance:</span><span>₹{Number(bill.previousBalance).toFixed(2)}</span></div>
             <div className="flex justify-between text-emerald-700 font-bold"><span>Amount Paid:</span><span>₹{bill.amountPaid}</span></div>
             <div className="flex justify-between text-rose-700 font-black text-sm border-t pt-1"><span>Net Balance Due:</span><span>₹{bill.dueBalance}</span></div>
           </div>
