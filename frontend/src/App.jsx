@@ -978,6 +978,7 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-800/60 text-slate-400 uppercase text-xs">
               <tr>
+                <th className="p-3">S.No.</th>
                 <th className="p-3">Bill No</th>
                 <th className="p-3">Date</th>
                 <th className="p-3">Party Name</th>
@@ -988,8 +989,9 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
-              {(userRole === 'special_staff' ? bills : filteredBills).map((b) => (
+              {(userRole === 'special_staff' ? bills : filteredBills).map((b, index) => (
                 <tr key={b._id} className="hover:bg-slate-800/30">
+                  <td className="p-3">{index + 1}</td>
                   <td className="p-3 font-bold text-white">#{b.billNo}</td>
                   <td className="p-3 text-slate-400">{new Date(b.billDate || Date.now()).toLocaleDateString()}</td>
                   <td className="p-3 font-semibold text-slate-200">{b.partyName}</td>
@@ -2731,6 +2733,7 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-800/70 text-slate-400 uppercase">
               <tr>
+                <th className="p-3">S.No.</th>
                 <th className="p-2.5">Article</th>
                 <th className="p-2.5">Size / Color</th>
                 <th className="p-2.5">MRP</th>
@@ -2741,10 +2744,11 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {articles.map((a) => {
+              {articles.map((a, index) => {
                 const matchedStock = stocks.find(s => s.articleCode === a.articleCode) || {};
                 return (
                   <tr key={a._id} className="hover:bg-slate-800/40">
+                    <td className="p-3">{index + 1}</td>
                     <td className="p-2.5 font-bold text-white">
                       {a.articleCode}
                       <span className="block text-[10px] text-slate-400">{a.brand || 'No Brand'}</span>
@@ -2955,6 +2959,7 @@ function StockInwardTab({ articles, stocks, sizeRanges, setSizeRanges, onStockUp
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-800/70 text-slate-400 uppercase">
               <tr>
+                <th className="p-3">S.No.</th>
                 <th className="p-2.5">Article</th>
                 <th className="p-2.5">Size / Color</th>
                 <th className="p-2.5">Cartons</th>
@@ -2965,8 +2970,9 @@ function StockInwardTab({ articles, stocks, sizeRanges, setSizeRanges, onStockUp
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {stocks.map((s) => (
+              {stocks.map((s, index) => (
                 <tr key={s._id} className="hover:bg-slate-800/40">
+                  <td className="p-3">{index + 1}</td>
                   <td className="p-2.5 font-bold text-white">{s.articleCode}</td>
                   <td className="p-2.5 text-slate-300">{s.sizeRange} <span className="text-[10px] text-slate-400 block">{s.color}</span></td>
                   <td className="p-2.5 font-bold text-slate-200">{s.cartons} Peti</td>
@@ -3077,8 +3083,9 @@ function PartiesTab({ parties, onPartyAdded }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {parties.map((p) => (
+              {parties.map((p, index) => (
                 <tr key={p._id} className="hover:bg-slate-800/40">
+                  <td className="p-3">{index + 1}</td>
                   <td className="p-2.5 font-bold text-white">{p.name}</td>
                   <td className="p-2.5 text-slate-300">{p.city || '-'}</td>
                   <td className="p-2.5 text-slate-300">{p.phone || '-'}</td>
