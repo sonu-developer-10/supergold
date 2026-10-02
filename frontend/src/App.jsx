@@ -1830,7 +1830,7 @@ function InvoiceView({ billId, bills, parties, onBack }) {
   const currentParty = parties.find(p => p._id === bill.partyId || p.name === bill.partyName);
 
   // Generate PDF Invoice
-  const handleDownloadPdf = async () => {
+const handleDownloadPdf = async () => {
   if (!invoiceRef.current) return;
 
   setIsGeneratingPdf(true);
@@ -1858,72 +1858,104 @@ function InvoiceView({ billId, bills, parties, onBack }) {
     const pdfWidth = pageWidth - margin * 2;
     const pdfUsableHeight = pageHeight - margin * 2;
 
-    // Canvas pixels corresponding to one complete PDF page
-    const pageCanvasHeight = Math.floor(
-      canvas.width * pdfUsableHeight / pdfWidth
-    );
+    const fullPdfHeight =
+      (canvas.height * pdfWidth) / canvas.width;
 
-    let offsetY = 0;
-    let pageNumber = 0;
+    /*
+     * Agar invoice sirf thoda sa A4 se bada hai,
+     * to usko ek page mein thoda shrink karke fit karo.
+     *
+     * Isse Net Balance Due akela next page par nahi jayega.
+     */
+    const smallOverflowLimit = pdfUsableHeight * 1.06;
 
-    while (offsetY < canvas.height) {
-      const sliceHeight = Math.min(
-        pageCanvasHeight,
-        canvas.height - offsetY
-      );
-
-      const pageCanvas = document.createElement('canvas');
-      pageCanvas.width = canvas.width;
-      pageCanvas.height = sliceHeight;
-
-      const pageContext = pageCanvas.getContext('2d');
-
-      pageContext.fillStyle = '#ffffff';
-      pageContext.fillRect(
-        0,
-        0,
-        pageCanvas.width,
-        pageCanvas.height
-      );
-
-      pageContext.drawImage(
-        canvas,
-        0,
-        offsetY,
-        canvas.width,
-        sliceHeight,
-        0,
-        0,
-        pageCanvas.width,
-        pageCanvas.height
-      );
-
-      const pageImgData = pageCanvas.toDataURL('image/png');
-
-      if (pageNumber > 0) {
-        pdf.addPage();
-      }
-
-      const imageHeight =
-        (sliceHeight * pdfWidth) / canvas.width;
+    if (fullPdfHeight <= smallOverflowLimit) {
+      const fitHeight = Math.min(fullPdfHeight, pdfUsableHeight);
 
       pdf.addImage(
-        pageImgData,
+        canvas.toDataURL('image/png'),
         'PNG',
         margin,
         margin,
         pdfWidth,
-        imageHeight
+        fitHeight
+      );
+    } else {
+      /*
+       * Invoice genuinely bada hai.
+       * Is case mein canvas ko proper non-overlapping
+       * pages mein split karo.
+       */
+      const pageCanvasHeight = Math.floor(
+        (canvas.width * pdfUsableHeight) / pdfWidth
       );
 
-      offsetY += sliceHeight;
-      pageNumber++;
+      let offsetY = 0;
+      let pageIndex = 0;
+
+      while (offsetY < canvas.height) {
+        const remainingCanvasHeight =
+          canvas.height - offsetY;
+
+        const sliceHeight = Math.min(
+          pageCanvasHeight,
+          remainingCanvasHeight
+        );
+
+        const pageCanvas = document.createElement('canvas');
+
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sliceHeight;
+
+        const ctx = pageCanvas.getContext('2d');
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(
+          0,
+          0,
+          pageCanvas.width,
+          pageCanvas.height
+        );
+
+        ctx.drawImage(
+          canvas,
+          0,
+          offsetY,
+          canvas.width,
+          sliceHeight,
+          0,
+          0,
+          pageCanvas.width,
+          pageCanvas.height
+        );
+
+        if (pageIndex > 0) {
+          pdf.addPage();
+        }
+
+        const imageHeight =
+          (sliceHeight * pdfWidth) / canvas.width;
+
+        pdf.addImage(
+          pageCanvas.toDataURL('image/png'),
+          'PNG',
+          margin,
+          margin,
+          pdfWidth,
+          imageHeight
+        );
+
+        offsetY += sliceHeight;
+        pageIndex++;
+      }
     }
 
-    pdf.save(`Invoice_${bill.billNo || 'SuperGold'}.pdf`);
+    pdf.save(
+      `Invoice_${bill.billNo || 'SuperGold'}.pdf`
+    );
 
   } catch (err) {
-    console.error(err);
+    console.error('PDF generation error:', err);
     notify('Error generating PDF download', 'error');
   } finally {
     setIsGeneratingPdf(false);
