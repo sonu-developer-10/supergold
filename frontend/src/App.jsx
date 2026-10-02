@@ -3075,6 +3075,7 @@ function PartiesTab({ parties, onPartyAdded }) {
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-800/70 text-slate-400 uppercase">
               <tr>
+                <th className="p-3">S.No.</th>
                 <th className="p-2.5">Party Name</th>
                 <th className="p-2.5">City</th>
                 <th className="p-2.5">Phone</th>
