@@ -1831,49 +1831,104 @@ function InvoiceView({ billId, bills, parties, onBack }) {
 
   // Generate PDF Invoice
   const handleDownloadPdf = async () => {
-    if (!invoiceRef.current) return;
-    setIsGeneratingPdf(true);
-    try {
-      const canvas = await html2canvas(invoiceRef.current, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        useCORS: true,
-        onclone: (clonedDocument) => {
-          clonedDocument.querySelectorAll('[data-pdf-hide="true"]').forEach((el) => {
+  if (!invoiceRef.current) return;
+
+  setIsGeneratingPdf(true);
+
+  try {
+    const canvas = await html2canvas(invoiceRef.current, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      onclone: (clonedDocument) => {
+        clonedDocument
+          .querySelectorAll('[data-pdf-hide="true"]')
+          .forEach((el) => {
             el.style.display = 'none';
           });
-        }
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 8;
-      const pdfWidth = pageWidth - (margin * 2);
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      }
+    });
 
-      if (pdfHeight <= pageHeight - (margin * 2)) {
-        pdf.addImage(imgData, 'PNG', margin, margin, pdfWidth, pdfHeight);
-      } else {
-        let remainingHeight = pdfHeight;
-        let position = margin;
-        pdf.addImage(imgData, 'PNG', margin, position, pdfWidth, pdfHeight);
-        remainingHeight -= pageHeight - (margin * 2);
-        while (remainingHeight > 0) {
-          pdf.addPage();
-          position = margin - (pdfHeight - remainingHeight);
-          pdf.addImage(imgData, 'PNG', margin, position, pdfWidth, pdfHeight);
-          remainingHeight -= pageHeight - (margin * 2);
-        }
+    const pdf = new jsPDF('p', 'mm', 'a4');
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    const margin = 8;
+    const pdfWidth = pageWidth - margin * 2;
+    const pdfUsableHeight = pageHeight - margin * 2;
+
+    // Canvas pixels corresponding to one complete PDF page
+    const pageCanvasHeight = Math.floor(
+      canvas.width * pdfUsableHeight / pdfWidth
+    );
+
+    let offsetY = 0;
+    let pageNumber = 0;
+
+    while (offsetY < canvas.height) {
+      const sliceHeight = Math.min(
+        pageCanvasHeight,
+        canvas.height - offsetY
+      );
+
+      const pageCanvas = document.createElement('canvas');
+      pageCanvas.width = canvas.width;
+      pageCanvas.height = sliceHeight;
+
+      const pageContext = pageCanvas.getContext('2d');
+
+      pageContext.fillStyle = '#ffffff';
+      pageContext.fillRect(
+        0,
+        0,
+        pageCanvas.width,
+        pageCanvas.height
+      );
+
+      pageContext.drawImage(
+        canvas,
+        0,
+        offsetY,
+        canvas.width,
+        sliceHeight,
+        0,
+        0,
+        pageCanvas.width,
+        pageCanvas.height
+      );
+
+      const pageImgData = pageCanvas.toDataURL('image/png');
+
+      if (pageNumber > 0) {
+        pdf.addPage();
       }
 
-      pdf.save(`Invoice_${bill.billNo || 'SuperGold'}.pdf`);
-    } catch (err) {
-      notify('Error generating PDF download', 'error');
-    } finally {
-      setIsGeneratingPdf(false);
+      const imageHeight =
+        (sliceHeight * pdfWidth) / canvas.width;
+
+      pdf.addImage(
+        pageImgData,
+        'PNG',
+        margin,
+        margin,
+        pdfWidth,
+        imageHeight
+      );
+
+      offsetY += sliceHeight;
+      pageNumber++;
     }
-  };
+
+    pdf.save(`Invoice_${bill.billNo || 'SuperGold'}.pdf`);
+
+  } catch (err) {
+    console.error(err);
+    notify('Error generating PDF download', 'error');
+  } finally {
+    setIsGeneratingPdf(false);
+  }
+};
 
   // Generate Professional Invoice Text
   const buildInvoiceMessage = () => {
