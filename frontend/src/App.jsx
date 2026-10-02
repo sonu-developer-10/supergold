@@ -321,9 +321,23 @@ function UserManagementModal({ onClose }) {
 function AppContent({ user, onLogout }) {
   const initialRoute = user.role === 'staff' ? '#staff-billing' : '#admin';
   const [route, setRoute] = useState(initialRoute);
-  const [activeTab, setActiveTab] = useState(
-    user.role === 'admin' || user.role === 'special_staff' ? 'dashboard' : 'billing'
-  );
+  const ACTIVE_TAB_KEY = `supergold_active_tab_${user.role}`;
+
+const [activeTab, setActiveTab] = useState(() => {
+  const savedTab = localStorage.getItem(ACTIVE_TAB_KEY);
+
+  if (savedTab) {
+    return savedTab;
+  }
+
+  return user.role === 'admin' || user.role === 'special_staff'
+    ? 'dashboard'
+    : 'billing';
+});
+
+useEffect(() => {
+  localStorage.setItem(ACTIVE_TAB_KEY, activeTab);
+}, [activeTab]);
   const [showUserManager, setShowUserManager] = useState(false);
   const [selectedBillId, setSelectedBillId] = useState(null);
 
@@ -627,6 +641,89 @@ function EditBillModal({ bill, parties, articles, sizeRanges, onClose, onSaved }
   const [onlinePaid, setOnlinePaid] = useState(String(Number(bill.onlinePaid || 0)));
   const [advancePaid, setAdvancePaid] = useState(String(Number(bill.advancePaid || 0)));
   const [saving, setSaving] = useState(false);
+
+  const BILLING_DRAFT_KEY = 'supergold_billing_draft';
+
+const [draftLoaded, setDraftLoaded] = useState(false);
+
+useEffect(() => {
+  try {
+    const savedDraft = localStorage.getItem(BILLING_DRAFT_KEY);
+
+    if (savedDraft) {
+      const draft = JSON.parse(savedDraft);
+
+      setSelectedParty(draft.selectedParty || '');
+
+      if (draft.selectedParty) {
+        const savedParty = parties.find(
+          p => String(p._id) === String(draft.selectedParty)
+        );
+        setPartyInfo(savedParty || null);
+      }
+
+      setDiscountAmount(draft.discountAmount ?? '0');
+      setItems(
+        Array.isArray(draft.items) && draft.items.length
+          ? draft.items
+          : [{
+              articleCode: '',
+              isCustom: false,
+              size: '6*9 (Gents)',
+              color: '',
+              cartons: 0,
+              loosePairs: 0,
+              totalPairs: 0,
+              mrp: 0,
+              discountPercent: 0,
+              rate: 0,
+              totalAmount: 0
+            }]
+      );
+
+      setReturnItems(Array.isArray(draft.returnItems) ? draft.returnItems : []);
+      setCashPaid(draft.cashPaid ?? '');
+      setOnlinePaid(draft.onlinePaid ?? '');
+      setAdvancePaid(draft.advancePaid ?? '');
+    }
+  } catch (err) {
+    console.error('Billing draft restore failed:', err);
+  } finally {
+    setDraftLoaded(true);
+  }
+}, []);
+
+useEffect(() => {
+  if (!draftLoaded) return;
+
+  try {
+    const draft = {
+      selectedParty,
+      discountAmount,
+      items,
+      returnItems,
+      cashPaid,
+      onlinePaid,
+      advancePaid
+    };
+
+    localStorage.setItem(
+      BILLING_DRAFT_KEY,
+      JSON.stringify(draft)
+    );
+  } catch (err) {
+    console.error('Billing draft save failed:', err);
+  }
+}, [
+  draftLoaded,
+  selectedParty,
+  discountAmount,
+  items,
+  returnItems,
+  cashPaid,
+  onlinePaid,
+  advancePaid
+]);
 
   const updateSale = (index, field, value) => {
     setItems((current) => current.map((row, i) => {
@@ -1057,6 +1154,89 @@ function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBil
   const [onlinePaid, setOnlinePaid] = useState('');
   const [advancePaid, setAdvancePaid] = useState('');
 
+  const BILLING_DRAFT_KEY = 'supergold_billing_draft';
+
+const [draftRestored, setDraftRestored] = useState(false);
+
+// Restore saved billing draft
+useEffect(() => {
+  try {
+    const saved = localStorage.getItem(BILLING_DRAFT_KEY);
+
+    if (saved) {
+      const draft = JSON.parse(saved);
+
+      setSelectedParty(draft.selectedParty || '');
+      setDiscountAmount(draft.discountAmount ?? '0');
+
+      setItems(
+        Array.isArray(draft.items) && draft.items.length > 0
+          ? draft.items
+          : [{
+              articleCode: '',
+              isCustom: false,
+              size: '6*9 (Gents)',
+              color: '',
+              cartons: 0,
+              loosePairs: 0,
+              totalPairs: 0,
+              mrp: 0,
+              discountPercent: 0,
+              rate: 0,
+              totalAmount: 0
+            }]
+      );
+
+      setReturnItems(
+        Array.isArray(draft.returnItems)
+          ? draft.returnItems
+          : []
+      );
+
+      setCashPaid(draft.cashPaid ?? '');
+      setOnlinePaid(draft.onlinePaid ?? '');
+      setAdvancePaid(draft.advancePaid ?? '');
+    }
+  } catch (err) {
+    console.error('Billing draft restore failed:', err);
+  } finally {
+    setDraftRestored(true);
+  }
+}, []);
+
+// Save billing draft automatically
+useEffect(() => {
+  if (!draftRestored) return;
+
+  try {
+    const draft = {
+      selectedParty,
+      discountAmount,
+      items,
+      returnItems,
+      cashPaid,
+      onlinePaid,
+      advancePaid
+    };
+
+    localStorage.setItem(
+      BILLING_DRAFT_KEY,
+      JSON.stringify(draft)
+    );
+  } catch (err) {
+    console.error('Billing draft save failed:', err);
+  }
+}, [
+  draftRestored,
+  selectedParty,
+  discountAmount,
+  items,
+  returnItems,
+  cashPaid,
+  onlinePaid,
+  advancePaid
+]);
+
   const handlePartyDropdownChange = (e) => {
     const val = e.target.value;
     if (val === 'ADD_NEW_PARTY_MODAL') {
@@ -1262,6 +1442,18 @@ function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBil
     e.preventDefault();
     if (!selectedParty) return notify('Kripya Party select karein!', 'error');
 
+    const invalidItem = items.findIndex(item =>
+    !item.isCustom &&
+    (!item.articleCode || Number(item.rate || 0) <= 0)
+  );
+
+  if (invalidItem !== -1) {
+    return notify(
+      `Item ${invalidItem + 1} mein Rate daalna zaroori hai!`,
+      'error'
+    );
+  }
+
     const payload = {
       partyId: selectedParty,
       partyName: partyInfo ? partyInfo.name : '',
@@ -1285,11 +1477,15 @@ function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBil
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (res.ok) {
-        const savedBill = await res.json();
-        onBillCreated();
-        onViewInvoice(savedBill._id);
-      }
+     if (res.ok) {
+  const savedBill = await res.json();
+
+  // Bill successfully created, so clear old draft
+  localStorage.removeItem(BILLING_DRAFT_KEY);
+
+  onBillCreated();
+  onViewInvoice(savedBill._id);
+}
     } catch (err) { notify('Error saving bill', 'error'); }
   };
 
@@ -1447,11 +1643,11 @@ function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBil
                         placeholder="0"
                         value={item.mrp}
                         onChange={(e) => handleItemChange(idx, 'mrp', e.target.value)}
-                        required
+                      
                       />
                     </td>
                     <td className="p-2.5"><input className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-amber-300 font-bold" type="text" min="0" max="100" step="0.01" placeholder="%" value={item.discountPercent} onChange={(e) => handleItemChange(idx, 'discountPercent', e.target.value)} /></td>
-                    <td className="p-2.5"><input className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold" type="text" min="0" step="0.01" placeholder="Rate" value={item.rate} onChange={(e) => handleItemChange(idx, 'rate', e.target.value)} required /></td>
+                    <td className="p-2.5"><input className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold" type="text" min="0" step="0.01" placeholder="Rate" value={Number(item.rate).toFixed(2)} onChange={(e) => handleItemChange(idx, 'rate', e.target.value)} required /></td>
 
                     <td className="p-2.5 font-black text-amber-400">₹{item.totalAmount}</td>
                     <td className="p-2.5 text-center">
@@ -1569,11 +1765,11 @@ function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBil
             <div className="flex justify-between text-xs text-purple-400"><span>Discount:</span><span>- ₹{discountVal}</span></div>
             <div className="flex justify-between text-sm font-bold text-white border-t border-slate-800 pt-1">
               <span>Today Bill Net Total:</span>
-              <span className="text-amber-400 text-lg font-black">₹{todayTotal}</span>
+              <span className="text-amber-400 text-lg font-black">₹{Number(todayTotal).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-xs text-emerald-400 font-bold"><span>Total Payment Received:</span><span>₹{totalPaid}</span></div>
+            <div className="flex justify-between text-xs text-emerald-400 font-bold"><span>Total Payment Received:</span><span>₹{Number(totalPaid).toFixed(2)}</span></div>
             <hr className="border-slate-800" />
-            <div className="flex justify-between text-base font-black text-rose-400"><span>Final Net Due:</span><span>₹{dueBalance}</span></div>
+            <div className="flex justify-between text-base font-black text-rose-400"><span>Final Net Due:</span><span>₹{Number(dueBalance).toFixed(2)}</span></div>
           </div>
         </div>
 
@@ -1751,12 +1947,11 @@ _SUPER GOLD FOOTWEARS - Quality & Trust_`;
   const buildPaymentReceiptMessage = () => {
   return `*🏢 SUPER GOLD FOOTWEARS*
 ----------------------------------------
-*💰 PAYMENT RECEIPT*
+*💰 PAYMENT RECEIPT* ${Number(bill.dueBalance || 0) <= 0 ? '✅' : '🟡'}
 ----------------------------------------
-*Invoice No:* #${bill.billNo}
+*Invoice No:* #${bill.billNo} 
 *Date:* ${new Date(bill.billDate || Date.now()).toLocaleDateString()}
 *Customer Name:* ${bill.partyName}
-
 ----------------------------------------
 *Invoice Total:* ₹${bill.todayTotal}
 *Previous Balance:* ₹${bill.previousBalance}
@@ -1764,9 +1959,6 @@ _SUPER GOLD FOOTWEARS - Quality & Trust_`;
 *Total Paid:* ₹${bill.amountPaid}
 *Balance Due:* ₹${bill.dueBalance}
 ----------------------------------------
-
-*Payment Status:* ${Number(bill.dueBalance || 0) <= 0 ? '✅ FULLY PAID' : '🟡 PARTIAL PAYMENT / BALANCE DUE'}
-
 Thank you for your payment!
 _Super Gold Footwears_`;
 };
@@ -3075,7 +3267,7 @@ function PartiesTab({ parties, onPartyAdded }) {
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-800/70 text-slate-400 uppercase">
               <tr>
-                <th className="p-3">S.No.</th>
+                <th className="p-3">S.No.</th> 
                 <th className="p-2.5">Party Name</th>
                 <th className="p-2.5">City</th>
                 <th className="p-2.5">Phone</th>
