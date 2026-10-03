@@ -951,7 +951,7 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
             <span className="text-xs uppercase font-extrabold">Sales ({timeFilter})</span>
             <DollarSign className="w-5 h-5 text-amber-400" />
           </div>
-          <div className="text-2xl font-black text-white">₹{totalSales.toLocaleString()}</div>
+          <div className="md:text-2xl text-xl font-black text-white">₹{totalSales.toLocaleString()}</div>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
@@ -959,7 +959,7 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
             <span className="text-xs uppercase font-extrabold">Received Collection</span>
             <Wallet className="w-5 h-5 text-emerald-400" />
           </div>
-          <div className="text-2xl font-black text-emerald-400">₹{totalReceived.toLocaleString()}</div>
+          <div className="md:text-2xl text-xl font-black text-emerald-400">₹{totalReceived.toLocaleString()}</div>
           <div className="text-xs text-slate-400 mt-1">Cash: ₹{totalCash} | Online: ₹{totalOnline}</div>
         </div>
 
@@ -968,7 +968,7 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
             <span className="text-xs uppercase font-extrabold">Total Dues (Lene Hain)</span>
             <Users className="w-5 h-5 text-rose-400" />
           </div>
-          <div className="text-2xl font-black text-rose-400">₹{totalDue.toLocaleString()}</div>
+          <div className="md:text-2xl text-xl font-black text-rose-400">₹{totalDue.toLocaleString()}</div>
         </div>
 
         {userRole === 'admin' && (
@@ -977,7 +977,7 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
               <span className="text-xs uppercase font-extrabold">Godown Stock</span>
               <Package className="w-5 h-5 text-amber-400" />
             </div>
-            <div className="text-2xl font-black text-white">{totalStockPairs} Pairs</div>
+            <div className="md:text-2xl text-xl font-black text-white">{totalStockPairs} Pairs</div>
             <div className="text-xs text-slate-400 mt-1">{articles.length} Active Articles</div>
           </div>
         )}
@@ -985,7 +985,7 @@ function AdminDashboard({ bills, parties, stocks, articles, sizeRanges, onViewIn
 
       <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-xl">
         <div className="flex items-center justify-between gap-3 mb-4">
-          <h3 className="font-extrabold text-white text-lg flex items-center gap-2">
+          <h3 className="font-extrabold text-white md:text-lg flex items-center gap-2">
             <Receipt className="w-5 h-5 text-amber-400" /> Invoices Register
           </h3>
           <button type="button" onClick={() => exportERPDataToExcel({ bills: userRole === 'special_staff' ? bills : filteredBills, parties, articles, stocks })} className="px-3 py-2 rounded-xl text-xs font-black bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500 hover:text-slate-950 transition flex items-center gap-2">
@@ -1444,19 +1444,19 @@ useEffect(() => {
   };
 
   return (
-    <div className="bg-slate-900/70 border border-slate-800 p-6 rounded-2xl shadow-2xl space-y-6">
+    <div className="bg-slate-900/70 border border-slate-800 md:p-6 p-4 rounded-2xl shadow-2xl space-y-6">
       <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-        <h3 className="text-lg font-black text-white flex items-center gap-2">
+        <h3 className="md:text-lg text-sm font-black text-white flex items-center gap-2">
           <Receipt className="w-5 h-5 text-amber-400" />Order Bill
         </h3>
         <div className="flex items-center gap-2">
           {selectedParty && (
-            <button type="button" onClick={() => setShowLastBills(v => !v)} className="px-4 py-2 rounded-xl text-xs font-black border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 transition">
+            <button type="button" onClick={() => setShowLastBills(v => !v)} className="px-2 py-2 rounded-xl text-xs font-black border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 transition">
               {showLastBills ? 'Hide Last Bills' : 'Last Bills'}
             </button>
           )}
           <button type="button" onClick={() => setShowPartyModal(true)} className="bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2">
-            <Plus className="w-4 h-4" /> Add New Party
+             Add New Party
           </button>
         </div>
       </div>
@@ -1540,15 +1540,15 @@ useEffect(() => {
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-800/70 text-slate-300 uppercase text-xs font-extrabold border-b border-slate-800">
                 <tr>
-                  <th className="p-3.5">Article Code</th>
-                  <th className="p-3.5">Size Range</th>
-                  <th className="p-3.5">Color</th>
-                  <th className="p-3.5">Total Pairs</th>
-                  <th className="p-3.5">MRP (₹)</th>
-                  <th className="p-3.5">Discount %</th>
-                  <th className="p-3.5">Rate (₹)</th>
-                  <th className="p-3.5">Amount (₹)</th>
-                  <th className="p-3.5 text-center">Action</th>
+                  <th className="p-3">Article Code</th>
+                  <th className="p-3">Size Range</th>
+                  <th className="p-3">Color</th>
+                  <th className="p-3">Total Pairs</th>
+                  <th className="p-3">MRP (₹)</th>
+                  <th className="p-3">Discount %</th>
+                  <th className="p-3">Rate (₹)</th>
+                  <th className="p-3">Amount (₹)</th>
+                  <th className="p-3 text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
@@ -1574,7 +1574,7 @@ useEffect(() => {
                           </button>
                         </div>
                       ) : (
-                        <select className="w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold" value={item.articleCode} onChange={(e) => handleItemChange(idx, 'articleCode', e.target.value)} required>
+                        <select className="md:w-32 w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold" value={item.articleCode} onChange={(e) => handleItemChange(idx, 'articleCode', e.target.value)} required>
                           <option value="">-- Article --</option>
                           {articles.map((a) => <option key={a._id} value={a.articleCode}>{a.articleCode}</option>)}
                           <option value="ADD_CUSTOM_ARTICLE" className="bg-amber-900 text-amber-200 font-bold">✍️ + Enter Custom Article Code...</option>
@@ -1582,17 +1582,17 @@ useEffect(() => {
                       )}
                     </td>
                     <td className="p-2.5">
-                      <select className="w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white" value={item.size} onChange={(e) => handleSizeDropdownChange(idx, e, false)}>
+                      <select className="md:w-32 w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white" value={item.size} onChange={(e) => handleSizeDropdownChange(idx, e, false)}>
                         {sizeRanges.map((sz, sIdx) => <option key={sIdx} value={sz}>{sz}</option>)}
                         <option value="ADD_CUSTOM_SIZE_RANGE" className="bg-amber-900 text-amber-200 font-bold">➕ Add Custom Size...</option>
                       </select>
                     </td>
-                    <td className="p-2.5"><input className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white" placeholder="Optional" value={item.color} onChange={(e) => handleItemChange(idx, 'color', e.target.value)} /></td>
-                    <td className="p-2.5"><input className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white" type="text" placeholder="0" value={item.loosePairs} onChange={(e) => handleItemChange(idx, 'loosePairs', e.target.value)} /></td>
+                    <td className="p-2.5"><input className="md:w-24 w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white" placeholder="Optional" value={item.color} onChange={(e) => handleItemChange(idx, 'color', e.target.value)} /></td>
+                    <td className="p-2.5"><input className="md:w-20 w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white" type="text" placeholder="0" value={item.loosePairs} onChange={(e) => handleItemChange(idx, 'loosePairs', e.target.value)} /></td>
 
                     <td className="p-2.5">
                       <input
-                        className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
+                        className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
                         type="number"                        
                         placeholder="0"
                         value={item.mrp}
@@ -1603,7 +1603,7 @@ useEffect(() => {
                     <td className="p-2.5"><input className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-amber-300 font-bold" type="text" min="0" max="100" step="0.01" placeholder="%" value={item.discountPercent} onChange={(e) => handleItemChange(idx, 'discountPercent', e.target.value)} /></td>
                     <td className="p-2.5">
   <input
-    className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
+    className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
     type="text"
     inputMode="decimal"
     placeholder="Rate"
@@ -1634,7 +1634,7 @@ useEffect(() => {
             </table>
           </div>
           <button type="button" onClick={addItemRow} className="text-xs bg-slate-800 border border-slate-700 text-slate-200 px-3.5 py-2 rounded-xl font-bold">
-            + Add Another Sale Article
+            + Add more item
           </button>
         </div>
 
@@ -1698,7 +1698,7 @@ useEffect(() => {
               </table>
             </div>
           ) : (
-            <div className="p-4 bg-slate-950/40 border border-dashed border-slate-800 rounded-xl text-center text-xs text-slate-500">
+            <div className="p-2 bg-slate-950/40 border border-dashed border-slate-800 rounded-xl text-center text-xs text-slate-500">
               Click above "+ Add Return Item" to return items.
             </div>
           )}
@@ -1745,7 +1745,7 @@ useEffect(() => {
         </div>
 
         <button type="submit" className="w-full bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black py-4 rounded-2xl shadow-xl text-base">
-          🖨️ Save Bill & Open Printable Invoice
+          🖨️ Save Bill & Open Invoice
         </button>
       </form>
 
@@ -3001,7 +3001,7 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
       </div>
 
       <div className="lg:col-span-2 bg-slate-900/70 border border-slate-800 p-6 rounded-2xl shadow-xl">
-        <h3 className="font-extrabold text-white text-lg mb-4 flex items-center justify-between">
+        <h3 className="font-extrabold text-white md:text-lg mb-4 flex items-center justify-between">
           <span>🏷️ Master Articles Catalog</span>
           <span className="text-xs text-amber-400 bg-amber-950/50 border border-amber-800/60 px-3 py-1 rounded-full font-bold">Synced with Godown Stock</span>
         </h3>
