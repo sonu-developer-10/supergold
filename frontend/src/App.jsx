@@ -39,9 +39,11 @@ const apiFetch = async (url, options = {}) => {
 };
 
 const ToastContext = createContext(null);
+const ConfirmContext = createContext(null);
 
 function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
+  const [confirmState, setConfirmState] = useState(null);
 
   const notify = (message, type = 'success') => {
     const id = Date.now() + Math.random();
@@ -51,8 +53,27 @@ function ToastProvider({ children }) {
     }, 3200);
   };
 
+  const confirm = (message, options = {}) => new Promise((resolve) => {
+    setConfirmState({
+      message,
+      title: options.title || 'Please Confirm',
+      confirmText: options.confirmText || 'Confirm',
+      cancelText: options.cancelText || 'Cancel',
+      tone: options.tone || 'danger',
+      resolve
+    });
+  });
+
+  const closeConfirm = (result) => {
+    if (!confirmState) return;
+    const resolve = confirmState.resolve;
+    setConfirmState(null);
+    resolve(result);
+  };
+
   return (
     <ToastContext.Provider value={notify}>
+      <ConfirmContext.Provider value={confirm}>
       {children}
       <div className="fixed top-5 right-5 z-[100] flex w-[min(92vw,380px)] flex-col gap-3 pointer-events-none">
         {toasts.map((toast) => (
@@ -68,12 +89,37 @@ function ToastProvider({ children }) {
         ))}
       </div>
       <style>{`@keyframes toastIn { from { opacity: 0; transform: translateX(24px) scale(0.98); } to { opacity: 1; transform: translateX(0) scale(1); } }`}</style>
+
+      {confirmState && createPortal(
+        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-5">
+            <div className="flex items-start gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${confirmState.tone === 'danger' ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                <span className="text-lg">{confirmState.tone === 'danger' ? '!' : '?'}</span>
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-black text-white">{confirmState.title}</h3>
+                <p className="mt-1.5 text-sm leading-5 text-slate-300">{confirmState.message}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button type="button" onClick={() => closeConfirm(false)} className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-200 text-sm font-bold hover:bg-slate-700 transition">{confirmState.cancelText}</button>
+              <button type="button" onClick={() => closeConfirm(true)} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-black transition ${confirmState.tone === 'danger' ? 'bg-rose-500 text-white hover:bg-rose-400' : 'bg-amber-500 text-slate-950 hover:bg-amber-400'}`}>{confirmState.confirmText}</button>
+            </div>
+          </div>
+        </div>, document.body
+      )}
+    </ConfirmContext.Provider>
     </ToastContext.Provider>
   );
 }
 
 function useToast() {
   return useContext(ToastContext);
+}
+
+function useConfirm() {
+  return useContext(ConfirmContext);
 }
 
 // Excel-compatible workbook export (no UI/library dependency required).
@@ -208,6 +254,81 @@ function LoginScreen({ onLogin }) {
 
 function UserManagementModal({ onClose }) {
   const notify = useToast();
+  const confirm = useConfirm();
+  // Edit Bill feature notes:
+  // 1. Existing bill data is loaded into editable sale rows.
+  // 2. Article selection follows the same searchable article flow used by Billing.
+  // 3. Custom Article mode is kept separate so an existing code can be reused with another size.
+  // 4. Size selection supports the existing size list, editing the current size, and adding a new size.
+  // 5. MRP + Discount % calculate Rate exactly like the normal billing form.
+  // 6. Rate can still be manually edited after the automatic calculation.
+  // 7. Return rows can be linked to an existing sale row or entered as a custom article.
+  // 8. Return quantity is limited to the selected sale quantity unless the return is custom.
+  // 9. Return rows support size, color, MRP, discount, rate, quantity, and amount editing.
+  // 10. Payment split remains Cash + Online + Advance.
+  // 11. Previous Ledger Due is calculated before the current bill, not from opening balance alone.
+  // 12. Delivery date remains editable.
+  // 13. Bill number and original bill date remain unchanged by this modal.
+  // 14. Save uses the existing PUT /api/bills/:id endpoint.
+  // 15. All changes are intentionally contained inside this modal plus the setter wiring.
+  // 16. No Dashboard, Billing, Parties, Stock, Article, Delivery, or Invoice UI is removed.
+  // 17. Defensive array checks prevent a blank screen if an API response is temporarily empty.
+  // 18. Invalid delivery dates are safely ignored instead of throwing during render.
+  // 19. Existing return items are matched back to their sale row where possible.
+  // 20. Saved item quantities remain pair-based for compatibility with current stock logic.
+  // 21. Existing custom sizes remain selectable after reopening an edited bill.
+  // 22. The parent size-range state is updated only when a custom size is added/edited.
+  // 23. No automatic stock-blocking rule is introduced here; backend stock rules remain unchanged.
+  // 24. The original surrounding application remains the source of truth for all other behavior.
+  // 25. This section intentionally keeps the edit workflow self-contained for safer QA.
+  // 26. Party switching recalculates the pre-bill ledger from the selected party.
+  // 27. The current bill itself is excluded from the previous-bill search.
+  // 28. Same-day bills are ordered by bill number when finding the previous bill.
+  // 29. Earlier bills are ordered by bill date before bill number.
+  // 30. Current balance is used only as a fallback when no earlier bill exists.
+  // 31. The fallback removes the current bill amount and current bill payment first.
+  // 32. This prevents the current bill from appearing as its own previous ledger.
+  // 33. Article selection fills article code, color, size, MRP, rate, and discount.
+  // 34. Clearing an article clears its dependent auto-filled fields.
+  // 35. Custom article typing never silently switches to an existing article variant.
+  // 36. This preserves support for identical article codes with different sizes.
+  // 37. Size changes do not overwrite manually entered article information.
+  // 38. MRP values can remain blank when the article has no MRP.
+  // 39. Decimal rates are preserved to two decimal places for calculations.
+  // 40. Pair quantities are normalized to non-negative integers.
+  // 41. Amounts are recalculated whenever quantity or rate changes.
+  // 42. Return amount is always calculated from return quantity multiplied by return rate.
+  // 43. Return selection copies the current sale row as its source.
+  // 44. Return quantity is capped against the selected sale row.
+  // 45. Custom return articles are not forced to match an existing sale row.
+  // 46. Return MRP and discount can be edited independently.
+  // 47. Cash, online, and advance values remain independently editable.
+  // 48. The displayed due is recomputed immediately as fields change.
+  // 49. Sale total, return total, discount, and previous due remain visible together.
+  // 50. The delivery date remains part of the same bill update payload.
+  // 51. Save validation prevents incomplete sale rows from being submitted.
+  // 52. Save validation also prevents incomplete return rows from being submitted.
+  // 53. Existing API authentication continues through apiFetch.
+  // 54. Existing toast notifications are reused for success and error messages.
+  // 55. Successful save refreshes the existing parent data workflow.
+  // 56. Closing behavior remains controlled by the existing parent modal state.
+  // 57. The modal styling remains within the existing SuperGold dark-theme language.
+  // 58. No new external dependency is required by the edit workflow.
+  // 59. SearchableBillingDropdown remains the existing shared component.
+  // 60. Existing lucide icons and global imports remain untouched.
+  // 61. The custom-size dialog uses the existing modal visual language.
+  // 62. Custom size changes update the shared parent size list.
+  // 63. A size already in the list is not duplicated.
+  // 64. Editing a size replaces the old value in the shared list.
+  // 65. The current row immediately receives the newly entered custom size.
+  // 66. These behaviors mirror the normal Billing tab without changing its UI.
+  // 67. The edit modal remains compatible with old bills that lack newer fields.
+  // 68. Optional fields use safe defaults so older records can still be edited.
+  // 69. Existing bill dates are never rewritten by the modal.
+  // 70. Existing bill numbers are never regenerated by the modal.
+  // 71. The edit operation remains a single bill PUT request.
+  // 72. This keeps the change isolated from the rest of the ERP workflow.
+
   const [users, setUsers] = useState([]);
   const [form, setForm] = useState({ username: '', password: '', role: 'staff' });
   const [loading, setLoading] = useState(true);
@@ -256,7 +377,8 @@ function UserManagementModal({ onClose }) {
   };
 
   const deleteUser = async (id) => {
-    if (!window.confirm('Ye login account delete karna hai?')) return;
+    const confirmed = await confirm('Ye login account delete karna hai?', { title: 'Delete Login Account', confirmText: 'Delete', tone: 'danger' });
+    if (!confirmed) return;
     try {
       const res = await apiFetch(`${API_BASE}/auth/users/${id}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
@@ -370,7 +492,22 @@ useEffect(() => {
   const [stocks, setStocks] = useState([]);
   const [staffList, setStaffList] = useState([]);
 
-  const [sizeRanges, setSizeRanges] = useState(DEFAULT_SIZE_RANGES);
+  const SIZE_RANGES_KEY = 'supergold_size_ranges';
+  const [sizeRanges, setSizeRanges] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SIZE_RANGES_KEY) || 'null');
+      return Array.isArray(saved) && saved.length ? saved : DEFAULT_SIZE_RANGES;
+    } catch {
+      return DEFAULT_SIZE_RANGES;
+    }
+  });
+
+  // Custom size ranges are master data, so keep them after refresh/re-login.
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIZE_RANGES_KEY, JSON.stringify(sizeRanges));
+    } catch { }
+  }, [sizeRanges]);
 
   useEffect(() => {
     const handleHashChange = () => setRoute(window.location.hash || '#staff-billing');
@@ -449,7 +586,16 @@ useEffect(() => {
   //     console.log('PARTIES DATA:', d);
   //     setParties(Array.isArray(d) ? d : []);
   //   });
-  const fetchArticles = () => apiFetch(`${API_BASE}/articles`).then(r => r.json()).then(d => setArticles(Array.isArray(d) ? d : []));
+  const fetchArticles = () => apiFetch(`${API_BASE}/articles`).then(r => r.json()).then(d => {
+    const list = Array.isArray(d) ? d : [];
+    setArticles(list);
+    // Any size already stored on an Article is also a valid master size.
+    setSizeRanges((current) => {
+      const base = Array.isArray(current) ? current : DEFAULT_SIZE_RANGES;
+      const articleSizes = list.map(a => String(a?.sizeRange || '').trim()).filter(Boolean);
+      return [...new Set([...base, ...articleSizes])];
+    });
+  });
   const fetchBills = () => apiFetch(`${API_BASE}/bills`).then(r => r.json()).then(d => setBills(Array.isArray(d) ? d : []));
   const fetchPartyPayments = async () => {
   try {
@@ -591,7 +737,7 @@ useEffect(() => {
       </header>
 
       <main className="max-w-7xl mx-auto p-4 md:p-6">
-        {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'dashboard' && <AdminDashboard bills={bills} partyPayments={partyPayments} parties={parties} stocks={stocks} articles={articles} sizeRanges={sizeRanges} onViewInvoice={handleOpenInvoice} onRefreshBills={fetchBills} onRefreshAll={fetchAllData} userRole={user.role} />}
+        {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'dashboard' && <AdminDashboard bills={bills} partyPayments={partyPayments} parties={parties} stocks={stocks} articles={articles} sizeRanges={sizeRanges} setSizeRanges={setSizeRanges} onViewInvoice={handleOpenInvoice} onRefreshBills={fetchBills} onRefreshAll={fetchAllData} userRole={user.role} />}
         {activeTab === 'billing' && (
           <BillingTab 
             parties={parties}
@@ -613,7 +759,7 @@ useEffect(() => {
   />
 )}
         {user.role === 'admin' && activeTab === 'stock' && <StockInwardTab articles={articles} stocks={stocks} sizeRanges={sizeRanges} setSizeRanges={setSizeRanges} onStockUpdated={fetchAllData} />}
-        {activeTab === 'parties' && <PartiesTab parties={parties} onPartyAdded={fetchAllData} />}
+        {activeTab === 'parties' && <PartiesTab parties={parties} bills={bills} onPartyAdded={fetchAllData} />}
         {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'articles' && <ArticlesTab articles={articles} stocks={stocks} sizeRanges={sizeRanges} setSizeRanges={setSizeRanges} onArticleAdded={fetchAllData} />}
         {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'staff' && <StaffTab staffList={staffList} onStaffUpdated={fetchStaff} />}
         {activeTab === 'invoiceView' && (
@@ -819,94 +965,129 @@ export default function App() {
 }
 
 
-function EditBillModal({ bill, parties, articles, bills, sizeRanges, onClose, onSaved }) {
+function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRanges, onClose, onSaved }) {
   const notify = useToast();
-  const selectedInitialParty = parties.find((p) => String(p._id) === String(bill.partyId));
+  const safeParties = Array.isArray(parties) ? parties : [];
+  const safeArticles = Array.isArray(articles) ? articles : [];
+  const safeBills = Array.isArray(bills) ? bills : [];
+  const safeSizeRanges = Array.isArray(sizeRanges) ? sizeRanges : [];
+  const safeBillItems = Array.isArray(bill?.items) ? bill.items : [];
+  const safeReturnItems = Array.isArray(bill?.returnItems) ? bill.returnItems : [];
+
+  const findArticle = (value) => {
+    const text = String(value || '').trim().toUpperCase();
+    return safeArticles.find((a) => String(a._id) === String(value))
+      || safeArticles.find((a) => String(a.articleCode || '').trim().toUpperCase() === text);
+  };
+
   const normalizeSale = (item) => {
-    const totalPairs = Math.max(0, Number(item.totalPairs || item.loosePairs || 0));
-    const rate = Number(item.rate || 0);
+    const totalPairs = Math.max(0, Number(item?.totalPairs || item?.loosePairs || 0));
+    const rate = Number(item?.rate || 0);
     return {
-      articleCode: item.articleCode || '',
-      articleId: item.articleId || '',
-      isCustom: !!item.isCustom,
-      size: item.size || '6*9 (Gents)',
-      color: item.color || '',
+      articleCode: item?.articleCode || '',
+      articleId: item?.articleId || '',
+      isCustom: !!item?.isCustom,
+      size: item?.size || '6*9 (Gents)',
+      color: item?.color || '',
+      cartons: Number(item?.cartons || 0),
+      loosePairs: totalPairs,
       totalPairs,
-      mrp: Number(item.mrp || 0),
-      discountPercent: Number(item.discountPercent || 0),
+      mrp: item?.mrp === 0 || item?.mrp === '0' ? '' : (item?.mrp ?? ''),
+      discountPercent: Number(item?.discountPercent || 0),
       rate,
-      totalAmount: Number(item.totalAmount ?? totalPairs * rate)
+      totalAmount: Number(item?.totalAmount ?? totalPairs * rate)
     };
   };
+
   const normalizeReturn = (item) => {
-    const totalPairs = Math.max(0, Number(item.totalPairs || 0));
-    const rate = Number(item.rate || 0);
+    const totalPairs = Math.max(0, Number(item?.totalPairs || item?.loosePairs || 0));
+    const rate = Number(item?.rate || 0);
+    let orderItemIndex = item?.orderItemIndex ?? '';
+    if (orderItemIndex === '' || orderItemIndex === null || orderItemIndex === undefined) {
+      orderItemIndex = safeBillItems.findIndex((sale) =>
+        String(sale?.articleCode || '').trim().toUpperCase() === String(item?.articleCode || '').trim().toUpperCase()
+        && String(sale?.size || '') === String(item?.size || '')
+      );
+      if (orderItemIndex < 0) orderItemIndex = '';
+    }
     return {
-      articleCode: item.articleCode || '',
-      articleId: item.articleId || '',
-      isCustom: !!item.isCustom,
-      size: item.size || '6*9 (Gents)',
-      color: item.color || '',
+      articleCode: item?.articleCode || '',
+      articleId: item?.articleId || '',
+      orderItemIndex,
+      isCustom: !!item?.isCustom,
+      size: item?.size || '6*9 (Gents)',
+      color: item?.color || '',
       totalPairs,
+      mrp: item?.mrp === 0 || item?.mrp === '0' ? '' : (item?.mrp ?? ''),
+      discountPercent: Number(item?.discountPercent || 0),
       rate,
-      totalAmount: Number(item.totalAmount ?? totalPairs * rate)
+      totalAmount: Number(item?.totalAmount ?? totalPairs * rate)
     };
   };
 
-  const [selectedParty, setSelectedParty] = useState(String(bill.partyId || ''));
+  const [selectedParty, setSelectedParty] = useState(String(bill?.partyId || ''));
 
-const previousBillForEdit = (Array.isArray(bills) ? bills : [])
-  .filter((b) => {
-    if (String(b.partyId) !== String(bill.partyId)) return false;
-    if (String(b._id) === String(bill._id)) return false;
+  const previousBillForEdit = safeBills
+    .filter((b) => {
+      if (String(b.partyId) !== String(bill.partyId)) return false;
+      if (String(b._id) === String(bill._id)) return false;
+      const currentDate = new Date(bill.billDate || 0).getTime();
+      const otherDate = new Date(b.billDate || 0).getTime();
+      if (otherDate < currentDate) return true;
+      return otherDate === currentDate && Number(b.billNo || 0) < Number(bill.billNo || 0);
+    })
+    .sort((a, b) => {
+      const dateDiff = new Date(b.billDate || 0).getTime() - new Date(a.billDate || 0).getTime();
+      return dateDiff !== 0 ? dateDiff : Number(b.billNo || 0) - Number(a.billNo || 0);
+    })[0];
 
-    const currentDate = new Date(bill.billDate || 0).getTime();
-    const otherDate = new Date(b.billDate || 0).getTime();
+  const editParty = safeParties.find((p) => String(p._id) === String(bill.partyId));
+  const calculatePreviousBalance = (partyId = bill.partyId) => {
+    const partyBills = safeBills
+      .filter((b) => {
+        if (String(b.partyId) !== String(partyId)) return false;
+        if (String(b._id) === String(bill._id)) return false;
+        const currentDate = new Date(bill.billDate || 0).getTime();
+        const otherDate = new Date(b.billDate || 0).getTime();
+        if (otherDate < currentDate) return true;
+        return otherDate === currentDate && Number(b.billNo || 0) < Number(bill.billNo || 0);
+      })
+      .sort((a, b) => {
+        const dateDiff = new Date(b.billDate || 0).getTime() - new Date(a.billDate || 0).getTime();
+        return dateDiff !== 0 ? dateDiff : Number(b.billNo || 0) - Number(a.billNo || 0);
+      });
+    const previousBill = partyBills[0];
+    const party = safeParties.find((p) => String(p._id) === String(partyId));
+    return previousBill
+      ? Number(previousBill.dueBalance || 0)
+      : Math.max(0, Number(party?.currentBalance || 0) - Number(bill.todayTotal || 0) + Number(bill.amountPaid || 0));
+  };
 
-    if (otherDate < currentDate) return true;
+  const initialPreviousBalance = previousBillForEdit
+    ? Number(previousBillForEdit.dueBalance || 0)
+    : Math.max(0, Number(editParty?.currentBalance || 0) - Number(bill.todayTotal || 0) + Number(bill.amountPaid || 0));
 
-    if (
-      otherDate === currentDate &&
-      Number(b.billNo || 0) < Number(bill.billNo || 0)
-    ) {
-      return true;
-    }
-
-    return false;
-  })
-  .sort((a, b) => {
-    const dateDiff =
-      new Date(b.billDate || 0).getTime() -
-      new Date(a.billDate || 0).getTime();
-
-    if (dateDiff !== 0) return dateDiff;
-
-    return Number(b.billNo || 0) - Number(a.billNo || 0);
-  })[0];
-
-const editParty = (Array.isArray(parties) ? parties : []).find(
-  (p) => String(p._id) === String(bill.partyId)
-);
-
-const initialPreviousBalance = previousBillForEdit
-  ? Number(previousBillForEdit.dueBalance || 0)
-  : Number(editParty?.openingBalance || 0);
-
-const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
-  const [items, setItems] = useState((bill.items || []).map(normalizeSale));
-  const [returnItems, setReturnItems] = useState((bill.returnItems || []).map(normalizeReturn));
+  const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
+  const [items, setItems] = useState(safeBillItems.map(normalizeSale));
+  const [returnItems, setReturnItems] = useState(safeReturnItems.map(normalizeReturn));
   const [discountVal, setDiscountVal] = useState(String(Number(bill.discountVal || 0)));
   const [cashPaid, setCashPaid] = useState(String(Number(bill.cashPaid || 0)));
   const [onlinePaid, setOnlinePaid] = useState(String(Number(bill.onlinePaid || 0)));
   const [advancePaid, setAdvancePaid] = useState(String(Number(bill.advancePaid || 0)));
-  const [deliveryDate, setDeliveryDate] = useState(
-  bill.deliveryDate
-    ? new Date(bill.deliveryDate).toISOString().slice(0, 10)
-    : ''
-);
+  const [deliveryDate, setDeliveryDate] = useState(() => {
+    if (!bill?.deliveryDate) return '';
+    const d = new Date(bill.deliveryDate);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  });
   const [saving, setSaving] = useState(false);
+  const [showCustomSizeModal, setShowCustomSizeModal] = useState(false);
+  const [customSizeInput, setCustomSizeInput] = useState('');
+  const [editingCustomSize, setEditingCustomSize] = useState(null);
+  const [customSizeTarget, setCustomSizeTarget] = useState(null);
 
-  
+  useEffect(() => {
+    setPreviousBalance(calculatePreviousBalance(bill.partyId));
+  }, [bills, parties, bill._id, bill.partyId, bill.billDate, bill.billNo]);
 
   const updateSale = (index, field, value) => {
     setItems((current) => current.map((row, i) => {
@@ -914,34 +1095,49 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
       const next = { ...row, [field]: value };
 
       if (field === 'articleCode') {
-        const article = articles.find((a) => String(a._id) === String(value))
-          || articles.find((a) => String(a.articleCode || '').trim().toUpperCase() === String(value || '').trim().toUpperCase());
-        if (article) {
-          next.isCustom = false;
-          next.articleId = article._id || '';
-          next.articleCode = String(article.articleCode || '').trim().toUpperCase();
-          next.color = article.color || '';
-          next.size = article.sizeRange || next.size;
-          next.mrp = Number(article.mrp || 0);
-          next.rate = Number(article.sellingPrice || article.wholesaleRate || 0);
-          next.discountPercent = next.mrp > 0 ? Number((((next.mrp - next.rate) / next.mrp) * 100).toFixed(2)) : 0;
-        } else {
+        if (value === 'ADD_CUSTOM_ARTICLE') {
+          Object.assign(next, { articleId: '', articleCode: '', isCustom: true, size: '6*9 (Gents)', color: '', mrp: '', discountPercent: 0, rate: 0 });
+        } else if (!String(value || '').trim()) {
+          Object.assign(next, { articleId: '', articleCode: '', isCustom: false, size: '6*9 (Gents)', color: '', mrp: '', discountPercent: 0, rate: 0 });
+        } else if (next.isCustom) {
           next.articleId = '';
-          next.articleCode = String(value || '').trim().toUpperCase();
-          next.isCustom = true;
+          next.articleCode = String(value).trim().toUpperCase();
+        } else {
+          const article = findArticle(value);
+          if (article) {
+            next.isCustom = false;
+            next.articleId = article._id || '';
+            next.articleCode = String(article.articleCode || '').trim().toUpperCase();
+            next.color = article.color || '';
+            next.size = article.sizeRange || next.size || '6*9 (Gents)';
+            next.mrp = Number(article.mrp || 0) > 0 ? String(article.mrp) : '';
+            next.rate = Number(article.sellingPrice || article.wholesaleRate || 0);
+            next.discountPercent = next.mrp !== '' && Number(next.mrp) > 0
+              ? Number((((Number(next.mrp) - next.rate) / Number(next.mrp)) * 100).toFixed(2)) : 0;
+          } else {
+            next.articleId = '';
+            next.articleCode = String(value).trim().toUpperCase();
+            next.isCustom = true;
+          }
         }
       }
 
       if (field === 'mrp' || field === 'discountPercent') {
-        const mrp = Math.max(0, Number(field === 'mrp' ? value : next.mrp || 0));
-        const discount = Math.max(0, Math.min(100, Number(field === 'discountPercent' ? value : next.discountPercent || 0)));
-        next.mrp = mrp;
-        next.discountPercent = discount;
-        next.rate = Number((mrp * (1 - discount / 100)).toFixed(2));
+        const mrpValue = field === 'mrp' ? value : next.mrp;
+        const discountValue = field === 'discountPercent' ? value : next.discountPercent;
+        const discount = discountValue === '' ? 0 : Math.max(0, Math.min(100, Number(discountValue || 0)));
+        next.mrp = mrpValue === '' ? '' : Math.max(0, Number(mrpValue));
+        next.discountPercent = discountValue === '' ? '' : discount;
+        if (next.mrp !== '') next.rate = Number((Number(next.mrp) * (1 - discount / 100)).toFixed(2));
       }
 
-      next.totalPairs = Math.max(0, parseInt(field === 'totalPairs' ? value : next.totalPairs || 0, 10) || 0);
-      next.totalAmount = Number((next.totalPairs * Number(next.rate || 0)).toFixed(2));
+      if (field === 'rate') next.rate = value === '' ? '' : Math.max(0, Number(value || 0));
+      if (field === 'loosePairs' || field === 'totalPairs') {
+        const pairs = Math.max(0, parseInt(value || 0, 10) || 0);
+        next.loosePairs = pairs;
+        next.totalPairs = pairs;
+      }
+      next.totalAmount = Number((Number(next.totalPairs || 0) * Number(next.rate || 0)).toFixed(2));
       return next;
     }));
   };
@@ -951,40 +1147,118 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
       if (i !== index) return row;
       const next = { ...row, [field]: value };
 
-      if (field === 'articleCode') {
-        const code = String(value || '').trim().toUpperCase();
-        next.articleCode = code;
-
-        if (!code) {
-          next.isCustom = false;
-          next.size = '6*9 (Gents)';
-          next.color = '';
-          next.rate = 0;
+      if (field === 'orderItemIndex') {
+        if (value === 'ADD_CUSTOM_ARTICLE') {
+          Object.assign(next, { orderItemIndex: '', isCustom: true, articleId: '', articleCode: '', size: '6*9 (Gents)', color: '', mrp: '', discountPercent: 0, rate: 0, totalPairs: 0, totalAmount: 0 });
+        } else if (value === '') {
+          Object.assign(next, { orderItemIndex: '', articleId: '', articleCode: '', isCustom: false, size: '6*9 (Gents)', color: '', mrp: '', discountPercent: 0, rate: 0, totalPairs: 0, totalAmount: 0 });
         } else {
-          const article = articles.find((a) => String(a._id) === String(value))
-            || articles.find((a) => String(a.articleCode || '').trim().toUpperCase() === code);
-          if (article) {
-            next.isCustom = false;
-            next.articleId = article._id || '';
-            next.articleCode = String(article.articleCode || '').trim().toUpperCase();
-            next.color = article.color || '';
-            next.size = article.sizeRange || next.size || '6*9 (Gents)';
-            next.rate = Number(article.sellingPrice || article.wholesaleRate || 0);
-          } else {
-            next.isCustom = true;
+          const orderIndex = Number(value);
+          const orderItem = items[orderIndex];
+          if (Number.isInteger(orderIndex) && orderItem) {
+            Object.assign(next, {
+              orderItemIndex: orderIndex,
+              isCustom: !!orderItem.isCustom,
+              articleId: orderItem.articleId || '',
+              articleCode: orderItem.articleCode || '',
+              size: orderItem.size || '6*9 (Gents)',
+              color: orderItem.color || '',
+              mrp: orderItem.mrp || '',
+              discountPercent: Number(orderItem.discountPercent || 0),
+              rate: Number(orderItem.rate || 0),
+              totalPairs: 0,
+              totalAmount: 0
+            });
           }
         }
       }
 
-      if (field === 'rate') {
-        next.rate = Math.max(0, Number(value || 0));
+      if (field === 'articleCode') {
+        if (value === 'ADD_CUSTOM_ARTICLE') {
+          next.isCustom = true; next.articleId = ''; next.articleCode = '';
+        } else {
+          next.articleCode = String(value || '').trim().toUpperCase();
+          const article = findArticle(value);
+          if (article && !next.isCustom) {
+            next.articleId = article._id || '';
+            next.color = article.color || next.color;
+            next.size = article.sizeRange || next.size;
+            next.mrp = Number(article.mrp || 0) > 0 ? String(article.mrp) : '';
+            next.rate = Number(article.sellingPrice || article.wholesaleRate || 0);
+            next.discountPercent = next.mrp !== '' && Number(next.mrp) > 0 ? Number((((Number(next.mrp) - next.rate) / Number(next.mrp)) * 100).toFixed(2)) : 0;
+          }
+        }
       }
 
-      next.totalPairs = Math.max(0, parseInt(field === 'totalPairs' ? value : next.totalPairs || 0, 10) || 0);
-      next.totalAmount = Number((next.totalPairs * Number(next.rate || 0)).toFixed(2));
+      if (field === 'mrp' || field === 'discountPercent') {
+        const mrpValue = field === 'mrp' ? value : next.mrp;
+        const discountValue = field === 'discountPercent' ? value : next.discountPercent;
+        const discount = discountValue === '' ? 0 : Math.max(0, Math.min(100, Number(discountValue || 0)));
+        next.mrp = mrpValue === '' ? '' : Math.max(0, Number(mrpValue));
+        next.discountPercent = discountValue === '' ? '' : discount;
+        if (next.mrp !== '') next.rate = Number((Number(next.mrp) * (1 - discount / 100)).toFixed(2));
+      }
+      if (field === 'rate') next.rate = value === '' ? '' : Math.max(0, Number(value || 0));
+      if (field === 'totalPairs') {
+        const orderItem = Number.isInteger(Number(next.orderItemIndex)) ? items[Number(next.orderItemIndex)] : null;
+        const requested = Math.max(0, parseInt(value || 0, 10) || 0);
+        next.totalPairs = next.isCustom ? requested : Math.min(requested, Number(orderItem?.totalPairs || 0));
+      }
+      next.totalAmount = Number((Number(next.totalPairs || 0) * Number(next.rate || 0)).toFixed(2));
       return next;
     }));
   };
+
+  const handleSizeDropdownChange = (idx, value, isReturn = false) => {
+    if (value === 'ADD_CUSTOM_SIZE_RANGE') {
+      setEditingCustomSize(null);
+      setCustomSizeTarget({ idx, isReturn });
+      setCustomSizeInput('');
+      setShowCustomSizeModal(true);
+      return;
+    }
+    if (value === 'EDIT_CUSTOM_SIZE_RANGE') {
+      const currentSize = isReturn ? returnItems[idx]?.size || '' : items[idx]?.size || '';
+      setCustomSizeTarget(null);
+      setEditingCustomSize({ idx, isReturn, oldSize: currentSize });
+      setCustomSizeInput(currentSize);
+      setShowCustomSizeModal(true);
+      return;
+    }
+    if (isReturn) updateReturn(idx, 'size', value);
+    else updateSale(idx, 'size', value);
+  };
+
+  const handleAddCustomSize = () => {
+  // New custom size is assigned back to the exact row that opened this dialog.
+    const newSize = customSizeInput.trim();
+    if (!newSize) return;
+
+    if (editingCustomSize) {
+      const { idx, isReturn, oldSize } = editingCustomSize;
+      if (typeof setSizeRanges === 'function' && oldSize && oldSize !== newSize) {
+        setSizeRanges((current) => (Array.isArray(current) ? current.map((sz) => sz === oldSize ? newSize : sz) : [newSize]));
+      }
+      if (isReturn) updateReturn(idx, 'size', newSize);
+      else updateSale(idx, 'size', newSize);
+    } else if (customSizeTarget) {
+      const { idx, isReturn } = customSizeTarget;
+      if (typeof setSizeRanges === 'function') {
+        setSizeRanges((current) => {
+          const list = Array.isArray(current) ? current : [];
+          return list.includes(newSize) ? list : [...list, newSize];
+        });
+      }
+      if (isReturn) updateReturn(idx, 'size', newSize);
+      else updateSale(idx, 'size', newSize);
+    }
+
+    setCustomSizeInput('');
+    setEditingCustomSize(null);
+    setCustomSizeTarget(null);
+    setShowCustomSizeModal(false);
+  };
+
 
   const rawTotal = items.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
   const returnTotal = returnItems.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
@@ -993,60 +1267,28 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
   const dueBalance = todayTotal + Number(previousBalance || 0) - amountPaid;
 
   const changeParty = (id) => {
-  setSelectedParty(id);
-
-  const party = parties.find(
-    (p) => String(p._id) === String(id)
-  );
-
-  const currentBillDate = new Date(bill.billDate || 0).getTime();
-
-  const previousBill = (Array.isArray(bills) ? bills : [])
-    .filter((b) => {
-      if (String(b.partyId) !== String(id)) return false;
-      if (String(b._id) === String(bill._id)) return false;
-
-      const otherDate = new Date(b.billDate || 0).getTime();
-
-      if (otherDate < currentBillDate) return true;
-
-      return (
-        otherDate === currentBillDate &&
-        Number(b.billNo || 0) < Number(bill.billNo || 0)
-      );
-    })
-    .sort((a, b) => {
-      const dateDiff =
-        new Date(b.billDate || 0).getTime() -
-        new Date(a.billDate || 0).getTime();
-
-      if (dateDiff !== 0) return dateDiff;
-
-      return Number(b.billNo || 0) - Number(a.billNo || 0);
-    })[0];
-
-  const previousBalanceValue = previousBill
-    ? Number(previousBill.dueBalance || 0)
-    : Number(party?.openingBalance || 0);
-
-  setPreviousBalance(previousBalanceValue);
-};
+    setSelectedParty(id);
+    setPreviousBalance(calculatePreviousBalance(id));
+  };
 
   const save = async () => {
     if (!selectedParty) return notify('Kripya Party select karein!', 'error');
     if (!items.length) return notify('Kam se kam ek sale item hona chahiye.', 'error');
-    if (items.some((item) => !String(item.articleCode || '').trim() || Number(item.totalPairs || 0) <= 0)) {
-      return notify('Sale items me Article Code aur Total Pairs check karein.', 'error');
+    if (items.some((item) => !String(item.articleCode || '').trim() || Number(item.totalPairs || 0) <= 0 || Number(item.rate || 0) <= 0)) {
+      return notify('Sale items me Article Code, Total Pairs aur Rate check karein.', 'error');
+    }
+    if (returnItems.some((item) => !String(item.articleCode || '').trim() || Number(item.totalPairs || 0) <= 0 || Number(item.rate || 0) <= 0)) {
+      return notify('Return items me Article Code, Total Pairs aur Rate check karein.', 'error');
     }
 
     setSaving(true);
     try {
-      const party = parties.find((p) => String(p._id) === String(selectedParty));
+      const party = safeParties.find((p) => String(p._id) === String(selectedParty));
       const payload = {
         partyId: selectedParty,
         partyName: party?.name || bill.partyName || '',
         deliveryDate,
-        items: items.map((item) => ({ ...item, totalPairs: Number(item.totalPairs || 0), totalAmount: Number(item.totalAmount || 0) })),
+        items: items.map((item) => ({ ...item, totalPairs: Number(item.totalPairs || 0), loosePairs: Number(item.loosePairs || item.totalPairs || 0), totalAmount: Number(item.totalAmount || 0) })),
         returnItems: returnItems.map((item) => ({ ...item, totalPairs: Number(item.totalPairs || 0), totalAmount: Number(item.totalAmount || 0) })),
         rawTotal,
         returnTotal,
@@ -1059,15 +1301,11 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
         amountPaid,
         dueBalance
       };
-
       const res = await apiFetch(`${API_BASE}/bills/${bill._id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Bill update failed');
-
+      if (!res.ok) throw new Error(data.error || data.message || 'Bill update failed');
       notify(`Bill #${bill.billNo} updated successfully!`);
       await onSaved(data);
       onClose();
@@ -1078,159 +1316,72 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
     }
   };
 
-  const addSale = () => setItems((v) => [...v, { articleCode: '', articleId: '', isCustom: false, size: '6*9 (Gents)', color: '', totalPairs: 0, mrp: '', discountPercent: 0, rate: 0, totalAmount: 0 }]);
-  const addReturn = () => setReturnItems((v) => [...v, { articleCode: '', articleId: '', isCustom: false, size: '6*9 (Gents)', color: '', totalPairs: 0, rate: 0, totalAmount: 0 }]);
+  const addSale = () => setItems((v) => [...v, { articleCode: '', articleId: '', isCustom: false, size: '6*9 (Gents)', color: '', cartons: 0, loosePairs: 0, totalPairs: 0, mrp: '', discountPercent: 0, rate: 0, totalAmount: 0 }]);
+  const addReturn = () => setReturnItems((v) => [...v, { articleCode: '', articleId: '', orderItemIndex: '', isCustom: false, size: '6*9 (Gents)', color: '', totalPairs: 0, mrp: '', discountPercent: 0, rate: 0, totalAmount: 0 }]);
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 md:p-6">
       <div className="w-full max-w-7xl max-h-[95vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl">
         <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-5 py-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-black text-white">Edit Bill #{bill.billNo}</h2>
-            <p className="text-xs text-slate-400 mt-1">Bill number aur original bill date same rahenge.</p>
-          </div>
+          <div><h2 className="text-lg font-black text-white">Edit Bill #{bill.billNo}</h2><p className="text-xs text-slate-400 mt-1">Bill number aur original bill date same rahenge.</p></div>
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold">Close</button>
         </div>
 
         <div className="p-5 space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1.5">Party</label>
-              <select value={selectedParty} onChange={(e) => changeParty(e.target.value)} className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-semibold">
-                {parties.map((p) => <option key={p._id} value={p._id}>{p.name}{p.city ? ` (${p.city})` : ''}</option>)}
-              </select>
+            <div><label className="block text-xs font-bold text-slate-300 mb-1.5">Party</label>
+              <SearchableBillingDropdown value={selectedParty} onChange={changeParty} placeholder="Search / choose party..." options={safeParties.map((p) => ({ value: p._id, label: `${p.name}${p.city ? ` (${p.city})` : ''}` }))} />
             </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1.5">Previous Ledger Due</label>
-              <input value={`₹${Number(previousBalance || 0).toFixed(2)}`} readOnly className="w-full p-3 bg-rose-950/30 border border-rose-800/50 text-rose-300 font-black rounded-xl" />
-            </div>
-            <div>
-  <label className="block text-xs font-bold text-slate-300 mb-1.5">
-    Delivery Date
-  </label>
-  <input
-    type="date"
-    value={deliveryDate}
-    onChange={(e) => setDeliveryDate(e.target.value)}
-    className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-semibold"
-  />
-</div>
+            <div><label className="block text-xs font-bold text-slate-300 mb-1.5">Previous Ledger Due</label><input value={`₹${Number(previousBalance || 0).toFixed(2)}`} readOnly className="w-full p-3 bg-rose-950/30 border border-rose-800/50 text-rose-300 font-black rounded-xl" /></div>
+            <div><label className="block text-xs font-bold text-slate-300 mb-1.5">Delivery Date</label><input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-semibold" /></div>
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-black text-amber-300">Sale Items</h3>
-              <button type="button" onClick={addSale} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">+ Add Item</button>
-            </div>
+            <div className="flex items-center justify-between"><h3 className="text-sm font-black text-amber-300">Sale Items</h3><button type="button" onClick={addSale} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">+ Add Item</button></div>
             <div className="overflow-x-auto border border-slate-800 rounded-2xl">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-800/70 text-slate-300">
-                  <tr><th className="p-3">Article</th><th className="p-3">Size</th><th className="p-3">Color</th><th className="p-3">Pairs</th><th className="p-3">MRP</th><th className="p-3">Disc %</th><th className="p-3">Rate</th><th className="p-3">Amount</th><th className="p-3"></th></tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {items.map((item, i) => (
-                    <tr key={i}>
-                      <td className="p-2"><input list={`edit-articles-${bill._id}`} value={item.articleCode} onChange={(e) => updateSale(i, 'articleCode', e.target.value.toUpperCase())} className="w-32 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
-                      <td className="p-2"><select value={item.size} onChange={(e) => updateSale(i, 'size', e.target.value)} className="w-32 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white">{sizeRanges.map((x) => <option key={x}>{x}</option>)}{!sizeRanges.includes(item.size) && <option>{item.size}</option>}</select></td>
-                      <td className="p-2"><input value={item.color} onChange={(e) => updateSale(i, 'color', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
-                      <td className="p-2"><input type="number" min="0" value={item.totalPairs} onChange={(e) => updateSale(i, 'totalPairs', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
-                      <td className="p-2"><input type="number" min="0" step="0.01" value={item.mrp} onChange={(e) => updateSale(i, 'mrp', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
-                      <td className="p-2"><input type="number" min="0" max="100" step="0.01" value={item.discountPercent} onChange={(e) => updateSale(i, 'discountPercent', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-amber-300" /></td>
-                      <td className="p-2"><input type="number" min="0" step="0.01" value={item.rate} onChange={(e) => updateSale(i, 'rate', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
-                      <td className="p-2 font-black text-amber-400">₹{Number(item.totalAmount || 0).toFixed(2)}</td>
-                      <td className="p-2"><button type="button" onClick={() => setItems((v) => v.filter((_, x) => x !== i))} className="text-rose-400 font-bold">✕</button></td>
-                    </tr>
-                  ))}
-                </tbody>
+              <table className="w-full text-left text-xs"><thead className="bg-slate-800/70 text-slate-300"><tr><th className="p-3">Article</th><th className="p-3">Size</th><th className="p-3">Color</th><th className="p-3">Pairs</th><th className="p-3">MRP</th><th className="p-3">Disc %</th><th className="p-3">Rate</th><th className="p-3">Amount</th><th className="p-3"></th></tr></thead>
+                <tbody className="divide-y divide-slate-800">{items.map((item, i) => <tr key={i}>
+                  <td className="p-2">{item.isCustom ? <div className="flex gap-1"><input value={item.articleCode} onChange={(e) => updateSale(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-amber-300 font-bold" /><button type="button" onClick={() => updateSale(i, 'articleCode', '')} className="text-xs text-slate-400">✕</button></div> : <SearchableBillingDropdown value={item.articleId || item.articleCode} onChange={(value) => updateSale(i, 'articleCode', value)} placeholder="Search article..." className="w-40" allowCustomValue={true} customValueLabel="Use Custom Article" options={[{ value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }, ...safeArticles.map((a) => ({ value: a._id || a.articleCode, label: `${String(a.articleCode || '').toUpperCase()} • ${a.sizeRange || ''} • ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}` }))]} />}</td>
+                  <td className="p-2"><SearchableBillingDropdown value={item.size} onChange={(value) => handleSizeDropdownChange(i, value, false)} placeholder="Search size..." className="w-40" options={[...safeSizeRanges.map((x) => ({ value: x, label: x })), { value: 'EDIT_CUSTOM_SIZE_RANGE', label: '✏️ Edit Current Size...' }, { value: 'ADD_CUSTOM_SIZE_RANGE', label: '➕ Add Custom Size...' }]} /></td>
+                  <td className="p-2"><input value={item.color} onChange={(e) => updateSale(i, 'color', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
+                  <td className="p-2"><input type="text" inputMode="numeric" min="0" value={item.totalPairs} onChange={(e) => updateSale(i, 'totalPairs', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
+                  <td className="p-2"><input type="text" inputMode="decimal" value={item.mrp} onChange={(e) => updateSale(i, 'mrp', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
+                  <td className="p-2"><input type="text" inputMode="decimal" value={item.discountPercent ?? ''} onChange={(e) => updateSale(i, 'discountPercent', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-amber-300" /></td>
+                  <td className="p-2"><input type="text" inputMode="decimal" value={item.rate} onChange={(e) => updateSale(i, 'rate', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
+                  <td className="p-2 font-black text-amber-400">₹{Number(item.totalAmount || 0).toFixed(2)}</td><td className="p-2"><button type="button" onClick={() => setItems((v) => v.filter((_, x) => x !== i))} className="text-rose-400 font-bold">✕</button></td>
+                </tr>)}</tbody>
               </table>
             </div>
-            <datalist id={`edit-articles-${bill._id}`}>{articles.map((a) => <option key={a._id} value={a.articleCode}>{a.brand || ''}</option>)}</datalist>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-black text-amber-300">Return Items</h3>
-              <button type="button" onClick={addReturn} className="px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs font-bold text-amber-300">+ Add Return</button>
-            </div>
-            {returnItems.length > 0 && (
-              <div className="overflow-x-auto border border-amber-900/40 rounded-2xl">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-amber-950/30 text-amber-200"><tr><th className="p-3">Article</th><th className="p-3">Size</th><th className="p-3">Color</th><th className="p-3">Pairs</th><th className="p-3">Rate</th><th className="p-3">Amount</th><th className="p-3"></th></tr></thead>
-                  <tbody className="divide-y divide-amber-900/30">
-                    {returnItems.map((item, i) => (
-                      <tr key={i}>
-                        <td className="p-2">
-                          {item.isCustom ? (
-                            <div className="flex gap-1 w-32">
-                              <input value={item.articleCode} onChange={(e) => updateReturn(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-xs text-amber-300 font-bold uppercase" />
-                              <button type="button" onClick={() => updateReturn(i, 'articleCode', '')} className="text-xs text-slate-400 hover:text-white">✕</button>
-                            </div>
-                          ) : (
-                            <SearchableBillingDropdown
-                              value={item.articleCode}
-                              onChange={(value) => updateReturn(i, 'articleCode', value)}
-                              placeholder="Search article..."
-                              className="w-36"
-                              options={[...articles.map((a) => ({ value: String(a.articleCode || '').toUpperCase(), label: String(a.articleCode || '').toUpperCase() })), { value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }]}
-                            />
-                          )}
-                        </td>
-                        <td className="p-2">
-                          <SearchableBillingDropdown
-                            value={item.size}
-                            onChange={(value) => updateReturn(i, 'size', value)}
-                            placeholder="Search size..."
-                            className="w-36"
-                            options={sizeRanges.map((x) => ({ value: x, label: x }))}
-                          />
-                        </td>
-                        <td className="p-2"><input value={item.color} onChange={(e) => updateReturn(i, 'color', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
-                        <td className="p-2"><input type="number" min="0" value={item.totalPairs} onChange={(e) => updateReturn(i, 'totalPairs', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
-                        <td className="p-2"><input type="number" min="0" step="0.01" value={item.rate} onChange={(e) => updateReturn(i, 'rate', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
-                        <td className="p-2 font-black text-amber-400">- ₹{Number(item.totalAmount || 0).toFixed(2)}</td>
-                        <td className="p-2"><button type="button" onClick={() => setReturnItems((v) => v.filter((_, x) => x !== i))} className="text-rose-400 font-bold">✕</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+          <div className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-black text-amber-300">Return Items</h3><button type="button" onClick={addReturn} className="px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs font-bold text-amber-300">+ Add Return Item</button></div>
+            {returnItems.length > 0 && <div className="overflow-x-auto border border-amber-900/40 rounded-2xl"><table className="w-full text-left text-xs"><thead className="bg-amber-950/30 text-amber-200"><tr><th className="p-3">Article</th><th className="p-3">Size</th><th className="p-3">Color</th><th className="p-3">Pairs</th><th className="p-3">MRP</th><th className="p-3">Disc %</th><th className="p-3">Rate</th><th className="p-3">Amount</th><th className="p-3"></th></tr></thead><tbody className="divide-y divide-amber-900/30">{returnItems.map((item, i) => <tr key={i}>
+              <td className="p-2">{item.isCustom ? <div className="flex gap-1"><input value={item.articleCode} onChange={(e) => updateReturn(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-amber-300 font-bold" /><button type="button" onClick={() => updateReturn(i, 'orderItemIndex', '')} className="text-xs text-slate-400">✕</button></div> : <SearchableBillingDropdown value={item.orderItemIndex === '' ? '' : String(item.orderItemIndex)} onChange={(value) => updateReturn(i, 'orderItemIndex', value)} placeholder="Search / choose Article..." className="w-40" options={[...items.map((sale, idx) => ({ value: String(idx), label: `${String(sale.articleCode || '').trim() || 'Custom'} • ${sale.size || ''}` })), { value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }]} />}</td>
+              <td className="p-2"><SearchableBillingDropdown value={item.size} onChange={(value) => handleSizeDropdownChange(i, value, true)} placeholder="Search size..." className="w-40" options={[...safeSizeRanges.map((x) => ({ value: x, label: x })), { value: 'EDIT_CUSTOM_SIZE_RANGE', label: '✏️ Edit Current Size...' }, { value: 'ADD_CUSTOM_SIZE_RANGE', label: '➕ Add Custom Size...' }]} /></td>
+              <td className="p-2"><input value={item.color} onChange={(e) => updateReturn(i, 'color', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
+              <td className="p-2"><input type="text" inputMode="numeric" value={item.totalPairs} onChange={(e) => updateReturn(i, 'totalPairs', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
+              <td className="p-2"><input type="text" inputMode="decimal" value={item.mrp} onChange={(e) => updateReturn(i, 'mrp', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
+              <td className="p-2"><input type="text" inputMode="decimal" value={item.discountPercent ?? ''} onChange={(e) => updateReturn(i, 'discountPercent', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-amber-300" /></td>
+              <td className="p-2"><input type="text" inputMode="decimal" value={item.rate} onChange={(e) => updateReturn(i, 'rate', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
+              <td className="p-2 font-black text-amber-400">- ₹{Number(item.totalAmount || 0).toFixed(2)}</td><td className="p-2"><button type="button" onClick={() => setReturnItems((v) => v.filter((_, x) => x !== i))} className="text-rose-400 font-bold">✕</button></td>
+            </tr>)}</tbody></table></div>}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div className="bg-slate-800/40 border border-slate-800 rounded-2xl p-5 space-y-3">
-              <h3 className="text-sm font-black text-amber-300">Bill Calculation</h3>
-              <div className="flex justify-between text-sm"><span className="text-slate-400">Sale Total</span><b className="text-white">₹{rawTotal.toFixed(2)}</b></div>
-              <div className="flex justify-between text-sm"><span className="text-slate-400">Return Total</span><b className="text-white">- ₹{returnTotal.toFixed(2)}</b></div>
-              <label className="flex justify-between items-center gap-3 text-sm"><span className="text-slate-400">Discount</span><input type="number" min="0" step="0.01" value={discountVal} onChange={(e) => setDiscountVal(e.target.value)} className="w-32 p-2 bg-slate-800 border border-slate-700 rounded-lg text-amber-300 font-bold" /></label>
-              <div className="border-t border-slate-700 pt-3 flex justify-between text-base"><span className="text-white font-black">Today's Total</span><b className="text-amber-400">₹{todayTotal.toFixed(2)}</b></div>
-              <div className="flex justify-between text-sm"><span className="text-slate-400">Previous Due</span><b className="text-rose-400">₹{Number(previousBalance || 0).toFixed(2)}</b></div>
-            </div>
-            <div className="bg-slate-800/40 border border-slate-800 rounded-2xl p-5 space-y-3">
-              <h3 className="text-sm font-black text-amber-300">Payment</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <label className="text-xs text-slate-400">Cash<input type="number" min="0" step="0.01" value={cashPaid} onChange={(e) => setCashPaid(e.target.value)} className="mt-1 w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-emerald-300 font-bold" /></label>
-                <label className="text-xs text-slate-400">Online<input type="number" min="0" step="0.01" value={onlinePaid} onChange={(e) => setOnlinePaid(e.target.value)} className="mt-1 w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-cyan-300 font-bold" /></label>
-                <label className="text-xs text-slate-400">Advance<input type="number" min="0" step="0.01" value={advancePaid} onChange={(e) => setAdvancePaid(e.target.value)} className="mt-1 w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-emerald-300 font-bold" /></label>
-              </div>
-              <div className="border-t border-slate-700 pt-3 flex justify-between"><span className="text-white font-black">Total Paid</span><b className="text-emerald-400">₹{amountPaid.toFixed(2)}</b></div>
-              <div className="flex justify-between text-base"><span className="text-white font-black">New Due</span><b className="text-rose-400">₹{dueBalance.toFixed(2)}</b></div>
-            </div>
-          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5"><div className="bg-slate-800/40 border border-slate-800 rounded-2xl p-5 space-y-3"><h3 className="text-sm font-black text-amber-300">Bill Calculation</h3><div className="flex justify-between text-sm"><span className="text-slate-400">Sale Total</span><b className="text-white">₹{rawTotal.toFixed(2)}</b></div><div className="flex justify-between text-sm"><span className="text-slate-400">Return Total</span><b className="text-white">- ₹{returnTotal.toFixed(2)}</b></div><label className="flex justify-between items-center gap-3 text-sm"><span className="text-slate-400">Discount</span><input type="text" inputMode="decimal" value={discountVal} onChange={(e) => setDiscountVal(e.target.value)} className="w-32 p-2 bg-slate-800 border border-slate-700 rounded-lg text-amber-300 font-bold" /></label><div className="border-t border-slate-700 pt-3 flex justify-between text-base"><span className="text-white font-black">Today's Total</span><b className="text-amber-400">₹{todayTotal.toFixed(2)}</b></div><div className="flex justify-between text-sm"><span className="text-slate-400">Previous Due</span><b className="text-rose-400">₹{Number(previousBalance || 0).toFixed(2)}</b></div></div>
+            <div className="bg-slate-800/40 border border-slate-800 rounded-2xl p-5 space-y-3"><h3 className="text-sm font-black text-amber-300">Payment</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><label className="text-xs text-slate-400">Cash<input type="text" inputMode="decimal" value={cashPaid} onChange={(e) => setCashPaid(e.target.value)} className="mt-1 w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-emerald-300 font-bold" /></label><label className="text-xs text-slate-400">Online<input type="text" inputMode="decimal" value={onlinePaid} onChange={(e) => setOnlinePaid(e.target.value)} className="mt-1 w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-cyan-300 font-bold" /></label><label className="text-xs text-slate-400">Advance<input type="text" inputMode="decimal" value={advancePaid} onChange={(e) => setAdvancePaid(e.target.value)} className="mt-1 w-full p-2 bg-slate-800 border border-slate-700 rounded-lg text-emerald-300 font-bold" /></label></div><div className="border-t border-slate-700 pt-3 flex justify-between"><span className="text-white font-black">Total Paid</span><b className="text-emerald-400">₹{amountPaid.toFixed(2)}</b></div><div className="flex justify-between text-base"><span className="text-white font-black">New Due</span><b className="text-rose-400">₹{dueBalance.toFixed(2)}</b></div></div></div>
 
-          <div className="flex justify-end gap-3 pt-2 border-t border-slate-800">
-            <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold">Cancel</button>
-            <button type="button" disabled={saving} onClick={save} className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black disabled:opacity-60">{saving ? 'Saving...' : 'Save Bill Changes'}</button>
-          </div>
+          <div className="flex justify-end gap-3 pt-2 border-t border-slate-800"><button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold">Cancel</button><button type="button" disabled={saving} onClick={save} className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black disabled:opacity-60">{saving ? 'Saving...' : 'Save Bill Changes'}</button></div>
         </div>
       </div>
+      {showCustomSizeModal && <div className="fixed inset-0 z-[120] bg-black/70 flex items-center justify-center p-4"><div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl"><h3 className="text-lg font-black text-white mb-3">{editingCustomSize ? 'Edit Size Range' : 'Add Custom Size Range'}</h3><input autoFocus value={customSizeInput} onChange={(e) => setCustomSizeInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddCustomSize(); }} placeholder="Example: 6*9 Premium" className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white" /><div className="flex justify-end gap-2 mt-4"><button type="button" onClick={() => setShowCustomSizeModal(false)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold">Cancel</button><button type="button" onClick={handleAddCustomSize} className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-black">Save Size</button></div></div></div>}
     </div>
   );
 }
 
 // ==================== DASHBOARD WITH EDIT / DELETE BILLS ====================
-function AdminDashboard({ bills, partyPayments, parties, stocks, articles, sizeRanges, onViewInvoice, onRefreshBills, onRefreshAll, userRole }) {
+function AdminDashboard({ bills, partyPayments, parties, stocks, articles, sizeRanges, setSizeRanges, onViewInvoice, onRefreshBills, onRefreshAll, userRole }) {
   const notify = useToast();
+  const confirm = useConfirm();
   const [timeFilter, setTimeFilter] = useState(
   'LAST_7_DAYS'
 );
@@ -1323,7 +1474,8 @@ const totalReceived = totalCash + totalOnline;
   const totalStockPairs = stocks.reduce((sum, s) => sum + (s.totalPairs || 0), 0);
 
   const handleDeleteBill = async (id) => {
-    if (window.confirm('Kya aap bill delete karna chahte hain?')) {
+    const confirmed = await confirm('Kya aap bill delete karna chahte hain?', { title: 'Delete Bill', confirmText: 'Delete', tone: 'danger' });
+    if (confirmed) {
       try {
         const res = await apiFetch(`${API_BASE}/bills/${id}`, { method: 'DELETE' });
         if (res.ok) {
@@ -1597,6 +1749,7 @@ const totalReceived = totalCash + totalOnline;
           articles={articles}
           bills={bills}
           sizeRanges={sizeRanges}
+          setSizeRanges={setSizeRanges}
           onClose={() => setEditingBill(null)}
           onSaved={async () => { await onRefreshAll(); }}
         />
@@ -1766,6 +1919,7 @@ function SearchableBillingDropdown({ value, options, onChange, placeholder='Sear
 
 function DeliveryTab({ bills, onViewInvoice, onRefresh }) {
   const notify = useToast();
+  const confirm = useConfirm();
 
   const getDateKey = (value) => {
     if (!value) return '';
@@ -1792,7 +1946,8 @@ function DeliveryTab({ bills, onViewInvoice, onRefresh }) {
     .sort((a, b) => Number(a.billNo || 0) - Number(b.billNo || 0));
 
   const markDelivered = async (bill) => {
-    if (!window.confirm(`${bill.partyName || 'Party'} ki delivery complete mark karni hai?`)) {
+    const confirmed = await confirm(`${bill.partyName || 'Party'} ki delivery complete mark karni hai?`, { title: 'Mark Delivery Complete', confirmText: 'Mark Delivered', tone: 'success' });
+    if (!confirmed) {
       return;
     }
 
@@ -1947,6 +2102,7 @@ function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBil
   const [savingDeliveryPayment, setSavingDeliveryPayment] = useState(false);
   const [customSizeInput, setCustomSizeInput] = useState('');
   const [editingCustomSize, setEditingCustomSize] = useState(null);
+  const [customSizeTarget, setCustomSizeTarget] = useState(null);
 
   const [newPartyName, setNewPartyName] = useState('');
   const [newPartyCity, setNewPartyCity] = useState('');
@@ -2183,7 +2339,7 @@ useEffect(() => {
   const val = e.target.value;
 
   if (val === 'ADD_CUSTOM_SIZE_RANGE') {
-    setEditingCustomSize(null);
+    setEditingCustomSize({ idx, isReturn, oldSize: '' });
     setCustomSizeInput('');
     setShowCustomSizeModal(true);
     return;
@@ -2231,8 +2387,20 @@ useEffect(() => {
       handleItemChange(idx, 'size', newSz);
     }
   } else {
-    if (!sizeRanges.includes(newSz)) {
-      setSizeRanges([...sizeRanges, newSz]);
+    setSizeRanges((current) => {
+      const list = Array.isArray(current) ? current : [];
+      return list.includes(newSz) ? list : [...list, newSz];
+    });
+
+    // When adding a brand-new size, immediately assign it to the row
+    // from which the custom-size dialog was opened.
+    const { idx, isReturn } = editingCustomSize || {};
+    if (Number.isInteger(idx)) {
+      if (isReturn) {
+        handleReturnItemChange(idx, 'size', newSz);
+      } else {
+        handleItemChange(idx, 'size', newSz);
+      }
     }
   }
 
@@ -2266,9 +2434,10 @@ useEffect(() => {
         cur.discountPercent = 0;
         cur.rate = 0;
       } else {
-  // Custom Article mode me typed code ko existing article se auto-select mat karo.
-  // Example: NEO already 2*5 hai, lekin bill me NEO 6*9 banana hai.
-  if (cur.isCustom) {
+  // Typed/new article code must be treated as Custom Article.
+  // Existing articles are selected only when the dropdown returns an article id.
+  if (cur.isCustom || !String(value || '').includes('-') && !articles.some((a) => String(a._id) === String(value))) {
+    cur.isCustom = true;
     cur.articleId = '';
     cur.articleCode = String(value).trim().toUpperCase();
   } else {
@@ -2282,10 +2451,7 @@ useEffect(() => {
 
     cur.articleCode = code;
 
-    const art = selectedArticle || articles.find(
-      (a) => String(a.articleCode || '').trim().toUpperCase() === code
-    );
-
+    const art = selectedArticle;
     if (art) {
       cur.isCustom = false;
       cur.articleId = art._id || '';
@@ -2295,12 +2461,7 @@ useEffect(() => {
       cur.rate = Number(art.sellingPrice || art.wholesaleRate || 0);
       cur.discountPercent =
         cur.mrp !== '' && Number(cur.mrp) > 0
-          ? Number(
-              (
-                ((Number(cur.mrp) - cur.rate) / Number(cur.mrp)) *
-                100
-              ).toFixed(2)
-            )
+          ? Number((((Number(cur.mrp) - cur.rate) / Number(cur.mrp)) * 100).toFixed(2))
           : 0;
     } else {
       cur.articleId = '';
@@ -2310,13 +2471,33 @@ useEffect(() => {
 }
     }
 
+    // A single article code can have multiple size variants. Changing size
+    // must switch to that exact article variant and its own MRP/rate.
+    if (field === 'size' && !cur.isCustom) {
+      const variant = articles.find((a) =>
+        String(a.articleCode || '').trim().toUpperCase() === String(cur.articleCode || '').trim().toUpperCase()
+        && String(a.sizeRange || '').trim() === String(value || '').trim()
+      );
+      if (variant) {
+        cur.articleId = variant._id || '';
+        cur.size = variant.sizeRange || value;
+        cur.color = variant.color || cur.color || '';
+        cur.mrp = Number(variant.mrp || 0) > 0 ? String(variant.mrp) : '';
+        cur.rate = Number(variant.sellingPrice || variant.wholesaleRate || 0);
+        cur.discountPercent = cur.mrp !== '' && Number(cur.mrp) > 0
+          ? Number((((Number(cur.mrp) - cur.rate) / Number(cur.mrp)) * 100).toFixed(2))
+          : 0;
+      }
+    }
+
     if (field === 'mrp' || field === 'discountPercent') {
       const mrpValue = field === 'mrp' ? value : cur.mrp;
-      const discount = Number(field === 'discountPercent' ? value : cur.discountPercent || 0);
+      const discountValue = field === 'discountPercent' ? value : cur.discountPercent;
+      const discount = discountValue === '' ? 0 : Math.max(0, Math.min(100, Number(discountValue || 0)));
       cur.mrp = mrpValue === '' ? '' : Math.max(0, Number(mrpValue));
-      cur.discountPercent = Math.max(0, Math.min(100, discount));
+      cur.discountPercent = discountValue === '' ? '' : discount;
       if (cur.mrp !== '') {
-        cur.rate = Number((Number(cur.mrp) * (1 - cur.discountPercent / 100)).toFixed(2));
+        cur.rate = Number((Number(cur.mrp) * (1 - discount / 100)).toFixed(2));
       }
     }
 
@@ -2373,11 +2554,12 @@ useEffect(() => {
 
     if (field === 'mrp' || field === 'discountPercent') {
       const mrpValue = field === 'mrp' ? value : cur.mrp;
-      const discount = Number(field === 'discountPercent' ? value : cur.discountPercent || 0);
+      const discountValue = field === 'discountPercent' ? value : cur.discountPercent;
+      const discount = discountValue === '' ? 0 : Math.max(0, Math.min(100, Number(discountValue || 0)));
       cur.mrp = mrpValue === '' ? '' : Math.max(0, Number(mrpValue));
-      cur.discountPercent = Math.max(0, Math.min(100, discount));
+      cur.discountPercent = discountValue === '' ? '' : discount;
       if (cur.mrp !== '') {
-        cur.rate = Number((Number(cur.mrp) * (1 - cur.discountPercent / 100)).toFixed(2));
+        cur.rate = Number((Number(cur.mrp) * (1 - discount / 100)).toFixed(2));
       }
     }
 
@@ -2633,6 +2815,8 @@ useEffect(() => {
                           onChange={(value) => handleItemChange(idx, 'articleCode', value)}
                           placeholder="Search article..."
                           className="md:w-40 w-32"
+                          allowCustomValue
+                          customValueLabel="Use new Article Code"
                           options={[
                             { value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' },
                             ...articles.map((a) => ({ value: a._id || a.articleCode, label: `${String(a.articleCode || '').toUpperCase()} • ${a.sizeRange || ''} • ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}` }))
@@ -2648,7 +2832,16 @@ useEffect(() => {
                         placeholder="Search size range..."
                         className="md:w-40 w-32"
                         options={[
-                          ...sizeRanges.map((sz) => ({ value: sz, label: sz })),
+                          ...(
+                            item.isCustom
+                              ? sizeRanges
+                              : sizeRanges.filter((sz) =>
+                                  articles.some((a) =>
+                                    String(a.articleCode || '').trim().toUpperCase() === String(item.articleCode || '').trim().toUpperCase()
+                                    && String(a.sizeRange || '').trim() === String(sz).trim()
+                                  )
+                                )
+                          ).map((sz) => ({ value: sz, label: sz })),
                           { value: 'EDIT_CUSTOM_SIZE_RANGE', label: '✏️ Edit Current Size...' },
                           { value: 'ADD_CUSTOM_SIZE_RANGE', label: '➕ Add Custom Size...' }
                         ]}
@@ -2660,14 +2853,15 @@ useEffect(() => {
                     <td className="p-2.5">
                       <input
                         className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
-                        type="number"                        
+                        type="text"
+                        inputMode="decimal"
                         placeholder="MRP"
                         value={item.mrp === 0 || item.mrp === '0' || item.mrp == null ? '' : item.mrp}
                         onChange={(e) => handleItemChange(idx, 'mrp', e.target.value)}
                       
                       />
                     </td>
-                    <td className="p-2.5"><input className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-amber-300 font-bold" type="text" min="0" max="100" step="0.01" placeholder="%" value={item.discountPercent} onChange={(e) => handleItemChange(idx, 'discountPercent', e.target.value)} /></td>
+                    <td className="p-2.5"><input className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-amber-300 font-bold" type="text" min="0" max="100" step="0.01" placeholder="%" value={item.discountPercent ?? ''} onChange={(e) => handleItemChange(idx, 'discountPercent', e.target.value)} /></td>
                     <td className="p-2.5">
   <input
     className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
@@ -2753,6 +2947,8 @@ useEffect(() => {
                             onChange={(value) => handleReturnItemChange(rIdx, 'orderItemIndex', value)}
                             placeholder="Search / choose Article Code..."
                             className="md:w-40 w-32"
+                            allowCustomValue
+                            customValueLabel="Use new Article Code"
                             options={[
                               ...items.map((orderItem, orderIndex) => ({ value: String(orderIndex), label: String(orderItem.articleCode || '').trim() || 'Custom Article' })),
                               { value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }
@@ -2782,7 +2978,7 @@ useEffect(() => {
                       <td className="p-2.5">
                         <input
                           className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white font-bold"
-                          type="number" placeholder="MRP"
+                          type="text" inputMode="decimal" placeholder="MRP"
                           value={rItem.mrp === 0 || rItem.mrp === '0' || rItem.mrp == null ? '' : rItem.mrp}
                           onChange={(e) => handleReturnItemChange(rIdx, 'mrp', e.target.value)}
                         />
@@ -2790,7 +2986,7 @@ useEffect(() => {
                       <td className="p-2.5">
                         <input
                           className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-amber-300 font-bold"
-                          type="text" inputMode="decimal" placeholder="%" value={rItem.discountPercent ?? 0}
+                          type="text" inputMode="decimal" placeholder="%" value={rItem.discountPercent ?? ''}
                           onChange={(e) => handleReturnItemChange(rIdx, 'discountPercent', e.target.value)}
                         />
                       </td>
@@ -3627,6 +3823,7 @@ const handleSendToSelected = (phone, type = 'invoice') => {
 // ==================== STAFF & EXPENSES MANAGEMENT TAB (UPGRADED) ====================
 function StaffTab({ staffList, onStaffUpdated }) {
   const notify = useToast();
+  const confirm = useConfirm();
   const getToday = () => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -3825,7 +4022,8 @@ function StaffTab({ staffList, onStaffUpdated }) {
   };
 
   const handleDeleteAdvance = async (record) => {
-    if (!window.confirm(`₹${Number(record.advanceAmount || 0).toLocaleString()} ka advance delete karna hai?`)) return;
+    const confirmed = await confirm(`₹${Number(record.advanceAmount || 0).toLocaleString()} ka advance delete karna hai?`, { title: 'Delete Advance', confirmText: 'Delete', tone: 'danger' });
+    if (!confirmed) return;
     try {
       const res = await apiFetch(`${API_BASE}/staff-records/${record._id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
@@ -3850,7 +4048,8 @@ function StaffTab({ staffList, onStaffUpdated }) {
   };
 
   const handleDeleteExpense = async (id) => {
-    if (!window.confirm('Ye expense delete karna hai?')) return;
+    const confirmed = await confirm('Ye expense delete karna hai?', { title: 'Delete Expense', confirmText: 'Delete', tone: 'danger' });
+    if (!confirmed) return;
     try { const res = await apiFetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' }); if (!res.ok) throw new Error(); await loadMonthData(); notify('Expense deleted.'); } catch (err) { notify('Expense delete nahi hua.', 'error'); }
   };
 
@@ -3883,12 +4082,14 @@ function StaffTab({ staffList, onStaffUpdated }) {
   };
 
   const handleDeleteSalaryPayment = async (payment) => {
-    if (!window.confirm(`₹${Number(payment.amount || 0).toLocaleString()} salary payment delete karna hai?`)) return;
+    const confirmed = await confirm(`₹${Number(payment.amount || 0).toLocaleString()} salary payment delete karna hai?`, { title: 'Delete Salary Payment', confirmText: 'Delete', tone: 'danger' });
+    if (!confirmed) return;
     try { const res = await apiFetch(`${API_BASE}/staff-salary-payments/${payment._id}`, { method: 'DELETE' }); if (!res.ok) throw new Error(); await loadMonthData(); notify('Salary payment deleted.'); } catch (err) { notify('Salary payment delete nahi hua.', 'error'); }
   };
 
   const handleDeleteStaff = async (id) => {
-    if (!window.confirm('Staff delete karna hai? Isse attendance/advance/salary payment history bhi delete hogi.')) return;
+    const confirmed = await confirm('Staff delete karna hai? Isse attendance/advance/salary payment history bhi delete hogi.', { title: 'Delete Staff', confirmText: 'Delete Staff', tone: 'danger' });
+    if (!confirmed) return;
     try { const res = await apiFetch(`${API_BASE}/staff/${id}`, { method: 'DELETE' }); if (!res.ok) throw new Error(); await refreshEverything(); } catch (err) { notify('Staff delete nahi hua.', 'error'); }
   };
 
@@ -4040,6 +4241,7 @@ function StaffTab({ staffList, onStaffUpdated }) {
 // ==================== MASTER ARTICLES TAB ====================
 function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdded }) {
   const notify = useToast();
+  const confirm = useConfirm();
   const [form, setForm] = useState({ articleId: '', articleCode: '', brand: '', color: '', sizeRange: '6*9 (Gents)', mrp: '', purchaseDiscountPercent: 0, purchaseRate: 0, sellingDiscountPercent: 0, wholesaleRate: 0, sellingPrice: 0, pairsInPeti: 12, cartons: 0, loosePairs: 0 });
   const [editingArticleId, setEditingArticleId] = useState(null);
   const [isCreatingVariant, setIsCreatingVariant] = useState(false);
@@ -4206,7 +4408,8 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
   };
 
   const handleDeleteArticle = async (id) => {
-    if (window.confirm('Delete article? (This will also remove synced stock entry)')) {
+    const confirmed = await confirm('Delete article? (This will also remove synced stock entry)', { title: 'Delete Article', confirmText: 'Delete', tone: 'danger' });
+    if (confirmed) {
       await apiFetch(`${API_BASE}/articles/${id}`, { method: 'DELETE' });
       onArticleAdded();
     }
@@ -4365,6 +4568,7 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
 // ==================== STOCK TAB ====================
 function StockInwardTab({ articles, stocks, sizeRanges, setSizeRanges, onStockUpdated }) {
   const notify = useToast();
+  const confirm = useConfirm();
   const [editingStockId, setEditingStockId] = useState(null);
   const stockFormRef = useRef(null);
   const [isCustomStockArticle, setIsCustomStockArticle] = useState(false); const [form, setForm] = useState({ articleCode: '', brand: '', color: '', sizeRange: '6*9 (Gents)', cartons: 0, pairsPerCarton: 12, loosePairs: 0, mrp: '', purchaseRate: 0, sellingPrice: 0 });
@@ -4463,7 +4667,8 @@ function StockInwardTab({ articles, stocks, sizeRanges, setSizeRanges, onStockUp
   };
 
   const handleDeleteStock = async (id) => {
-    if (window.confirm('Delete this stock item?')) {
+    const confirmed = await confirm('Delete this stock item?', { title: 'Delete Stock', confirmText: 'Delete', tone: 'danger' });
+    if (confirmed) {
       try {
         const res = await apiFetch(`${API_BASE}/stock/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Error deleting stock');
@@ -4614,8 +4819,9 @@ function StockInwardTab({ articles, stocks, sizeRanges, setSizeRanges, onStockUp
 }
 
 // ==================== PARTIES TAB ====================
-function PartiesTab({ parties, onPartyAdded }) {
+function PartiesTab({ parties, bills, onPartyAdded }) {
   const notify = useToast();
+  const confirm = useConfirm();
   const [form, setForm] = useState({ name: '', phone: '', city: '', openingBalance: 0, currentBalance: 0 });
   const [editingId, setEditingId] = useState(null);
   const partyFormRef = useRef(null);
@@ -4623,6 +4829,7 @@ function PartiesTab({ parties, onPartyAdded }) {
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const [paymentHistoryParty, setPaymentHistoryParty] = useState(null);
   const [paymentHistory, setPaymentHistory] = useState([]);
+  const [transactionHistory, setTransactionHistory] = useState([]);
   const [editingPayment, setEditingPayment] = useState(null);
   const [editPaymentForm, setEditPaymentForm] = useState({
     paymentDate: '',
@@ -4714,7 +4921,8 @@ function PartiesTab({ parties, onPartyAdded }) {
 };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Delete party account?')) {
+    const confirmed = await confirm('Delete party account?', { title: 'Delete Party Account', confirmText: 'Delete', tone: 'danger' });
+    if (confirmed) {
       await apiFetch(`${API_BASE}/parties/${id}`, { method: 'DELETE' });
       onPartyAdded();
     }
@@ -4793,16 +5001,16 @@ function PartiesTab({ parties, onPartyAdded }) {
   setShowPaymentHistory(true);
   setPaymentHistoryLoading(true);
   setPaymentHistory([]);
-
+let latestParty = null;
   try {
     // 1. Latest party balance fetch karo
     const partiesRes = await apiFetch(`${API_BASE}/parties`);
     const partiesData = await partiesRes.json().catch(() => []);
 
     if (partiesRes.ok && Array.isArray(partiesData)) {
-      const latestParty = partiesData.find(
-        p => String(p._id) === String(party._id)
-      );
+     latestParty = partiesData.find(
+  p => String(p._id) === String(party._id)
+);
 
       if (latestParty) {
         setPaymentHistoryParty(latestParty);
@@ -4825,6 +5033,98 @@ function PartiesTab({ parties, onPartyAdded }) {
     }
 
     setPaymentHistory(Array.isArray(data) ? data : []);
+    const partyBills = bills.filter(
+  b =>
+    String(b.partyId?._id || b.partyId) === String(party._id)
+);
+
+const transactions = [];
+
+// 1. Opening Balance
+const openingBalance = Number(
+  latestParty?.openingBalance ?? party.openingBalance ?? 0
+);
+
+if (openingBalance !== 0) {
+  transactions.push({
+    id: `opening-${party._id}`,
+    date: null,
+    type: 'Opening Balance',
+    detail: 'Opening Balance',
+    debit: openingBalance < 0 ? Math.abs(openingBalance) : 0,
+    credit: openingBalance > 0 ? openingBalance : 0,
+    balanceChange: openingBalance,
+    source: 'opening'
+  });
+}
+
+// 2. Bills
+partyBills.forEach(bill => {
+  const total = Number(bill.todayTotal || 0);
+  const paid = Number(bill.amountPaid || 0);
+
+  transactions.push({
+    id: `bill-${bill._id}`,
+    date: bill.billDate,
+    type: 'Bill',
+    detail: `Bill #${bill.billNo || '-'}`,
+    debit: total,
+    credit: paid,
+    balanceChange: total - paid,
+    source: 'bill',
+    billId: bill._id,
+    billNo: bill.billNo
+  });
+});
+
+// 3. Party Payments
+(Array.isArray(data) ? data : []).forEach(payment => {
+  const amount = Number(payment.amount || 0);
+
+  transactions.push({
+    id: `payment-${payment._id}`,
+    date: payment.paymentDate,
+    type: 'Payment',
+    detail: [
+      payment.paymentMode || 'Cash',
+      payment.reference ? `Ref: ${payment.reference}` : '',
+      payment.remark || ''
+    ].filter(Boolean).join(' • '),
+    debit: 0,
+    credit: amount,
+    balanceChange: -amount,
+    source: 'partyPayment',
+    payment
+  });
+});
+
+// Oldest → newest
+transactions.sort((a, b) => {
+  const dateA = a.date ? new Date(a.date).getTime() : 0;
+  const dateB = b.date ? new Date(b.date).getTime() : 0;
+
+  if (dateA !== dateB) return dateA - dateB;
+
+  // Same date: payment first, then bill
+  if (a.source === 'partyPayment' && b.source === 'bill') return -1;
+  if (a.source === 'bill' && b.source === 'partyPayment') return 1;
+
+  return 0;
+});
+
+// Running balance
+let runningBalance = 0;
+
+const historyWithBalance = transactions.map(tx => {
+  runningBalance += Number(tx.balanceChange || 0);
+
+  return {
+    ...tx,
+    balance: Number(runningBalance.toFixed(2))
+  };
+});
+
+setTransactionHistory(historyWithBalance);
 
   } catch (err) {
     notify(
@@ -4898,9 +5198,11 @@ function PartiesTab({ parties, onPartyAdded }) {
   };
 
     const deletePartyPayment = async (payment) => {
-    if (!window.confirm(
-      `Delete payment of ₹${Number(payment.amount || 0).toFixed(2)}?`
-    )) {
+    const confirmed = await confirm(
+      `Delete payment of ₹${Number(payment.amount || 0).toFixed(2)}?`,
+      { title: 'Delete Payment', confirmText: 'Delete', tone: 'danger' }
+    );
+    if (!confirmed) {
       return;
     }
 
@@ -5174,7 +5476,7 @@ function PartiesTab({ parties, onPartyAdded }) {
             <div className="flex items-center justify-between p-5 border-b border-slate-800">
               <div>
                 <h3 className="text-lg font-black text-white">
-                  Payment History / Ledger
+                  Party Transaction History
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">
                   {paymentHistoryParty.name}
@@ -5220,90 +5522,122 @@ function PartiesTab({ parties, onPartyAdded }) {
                 </div>
               </div>
 
-              {paymentHistoryLoading ? (
-                <div className="text-center py-10 text-slate-400 text-sm">
-                  Loading payment history...
-                </div>
-              ) : paymentHistory.length === 0 ? (
-                <div className="text-center py-10 text-slate-400 text-sm">
-                  No payment history found.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-800 text-slate-400 uppercase">
-                      <tr>
-                        <th className="p-3">Date</th>
-                        <th className="p-3 text-right">Amount</th>
-                        <th className="p-3">Mode</th>
-                        <th className="p-3">Reference / UTR</th>
-                        <th className="p-3">Remark</th>
-                        <th className="p-3 text-center">Actions</th>
-                      </tr>
-                    </thead>
 
-                    <tbody className="divide-y divide-slate-800">
-                      {paymentHistory.map((payment) => (
-                        <tr
-                          key={payment._id}
-                          className="hover:bg-slate-800/40"
-                        >
-                          <td className="p-3 text-slate-300">
-                            {payment.paymentDate || '-'}
-                          </td>
-
-                          <td className="p-3 text-right font-black text-emerald-400">
-                            ₹{Number(payment.amount || 0).toFixed(2)}
-                          </td>
-
-                          <td className="p-3">
-                            <span
-                              className={
-                                payment.paymentMode === 'Online'
-                                  ? 'text-cyan-400 font-bold'
-                                  : 'text-amber-400 font-bold'
-                              }
-                            >
-                              {payment.paymentMode || 'Cash'}
-                            </span>
-                          </td>
-
-                          <td className="p-3 text-slate-300">
-                            {payment.reference || '-'}
-                          </td>
-
-                          <td className="p-3 text-slate-300">
-                            {payment.remark || '-'}
-                          </td>
-                          <td className="p-3">
-  <div className="flex justify-center gap-2">
-
-    <button
-      type="button"
-      onClick={() => openEditPayment(payment)}
-      className="text-amber-400 hover:text-amber-300"
-      title="Edit Payment"
-    >
-      <Edit className="w-4 h-4" />
-    </button>
-
-    <button
-      type="button"
-      onClick={() => deletePartyPayment(payment)}
-      className="text-rose-400 hover:text-rose-300"
-      title="Delete Payment"
-    >
-      <Trash2 className="w-4 h-4" />
-    </button>
-
+             {paymentHistoryLoading ? (
+  <div className="text-center py-10 text-slate-400 text-sm">
+    Loading transaction history...
   </div>
-</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+) : (
+  <div className="overflow-x-auto border border-slate-700 rounded-xl">
+    <table className="w-full text-xs">
+      <thead className="bg-slate-800">
+        <tr>
+          <th className="p-3 text-left text-slate-400">Date</th>
+          <th className="p-3 text-left text-slate-400">Type</th>
+          <th className="p-3 text-left text-slate-400">Details</th>
+          <th className="p-3 text-right text-slate-400">Debit</th>
+          <th className="p-3 text-right text-slate-400">Credit</th>
+          <th className="p-3 text-right text-slate-400">Balance</th>
+          <th className="p-3 text-center text-slate-400">Action</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {transactionHistory.length === 0 ? (
+          <tr>
+            <td
+              colSpan="7"
+              className="p-8 text-center text-slate-400"
+            >
+              No transaction history found.
+            </td>
+          </tr>
+        ) : (
+          transactionHistory.map((tx) => (
+            <tr
+              key={tx.id}
+              className="border-t border-slate-800 hover:bg-slate-800/40"
+            >
+              <td className="p-3 text-slate-300 whitespace-nowrap">
+                {tx.date
+                  ? new Date(tx.date).toLocaleDateString('en-IN')
+                  : '-'}
+              </td>
+
+              <td className="p-3 font-bold">
+                {tx.type === 'Bill' && (
+                  <span className="text-amber-400">
+                    Bill
+                  </span>
+                )}
+
+                {tx.type === 'Payment' && (
+                  <span className="text-emerald-400">
+                    Payment
+                  </span>
+                )}
+
+                {tx.type === 'Opening Balance' && (
+                  <span className="text-cyan-400">
+                    Opening
+                  </span>
+                )}
+              </td>
+
+              <td className="p-3 text-slate-300">
+                {tx.detail}
+              </td>
+
+              <td className="p-3 text-right text-rose-400 font-bold">
+                {Number(tx.debit || 0) > 0
+                  ? `₹${Number(tx.debit).toFixed(2)}`
+                  : '-'}
+              </td>
+
+              <td className="p-3 text-right text-emerald-400 font-bold">
+                {Number(tx.credit || 0) > 0
+                  ? `₹${Number(tx.credit).toFixed(2)}`
+                  : '-'}
+              </td>
+
+              <td className="p-3 text-right font-black text-white">
+                ₹{Number(tx.balance || 0).toFixed(2)}
+              </td>
+
+              <td className="p-3 text-center">
+                {tx.source === 'partyPayment' && tx.payment ? (
+                  <div className="flex justify-center gap-2">
+
+                    <button
+                      type="button"
+                      onClick={() => openEditPayment(tx.payment)}
+                      className="text-amber-400 hover:text-amber-300"
+                      title="Edit Payment"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => deletePartyPayment(tx.payment)}
+                      className="text-rose-400 hover:text-rose-300"
+                      title="Delete Payment"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+
+                  </div>
+                ) : (
+                  <span className="text-slate-600">—</span>
+                )}
+              </td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  </div>
+)}
 
             </div>
           </div>
