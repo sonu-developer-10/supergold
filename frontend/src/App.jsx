@@ -1154,7 +1154,7 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
                       <tr key={i}>
                         <td className="p-2">
                           {item.isCustom ? (
-                            <div className="flex gap-1">
+                            <div className="flex gap-1 w-32">
                               <input value={item.articleCode} onChange={(e) => updateReturn(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-xs text-amber-300 font-bold uppercase" />
                               <button type="button" onClick={() => updateReturn(i, 'articleCode', '')} className="text-xs text-slate-400 hover:text-white">✕</button>
                             </div>
@@ -2259,25 +2259,48 @@ useEffect(() => {
         cur.discountPercent = 0;
         cur.rate = 0;
       } else {
-        const selectedArticle = articles.find((a) => String(a._id) === String(value));
-        const code = selectedArticle ? String(selectedArticle.articleCode || '').trim().toUpperCase() : String(value).trim().toUpperCase();
-        cur.articleCode = code;
-        const art = selectedArticle || articles.find((a) => String(a.articleCode || '').trim().toUpperCase() === code);
-        if (art) {
-          cur.isCustom = false;
-          cur.articleId = art._id || '';
-          cur.color = art.color || '';
-          cur.size = art.sizeRange || '6*9 (Gents)';
-          cur.mrp = Number(art.mrp || 0) > 0 ? String(art.mrp) : '';
-          cur.rate = Number(art.sellingPrice || art.wholesaleRate || 0);
-          cur.discountPercent = cur.mrp !== '' && Number(cur.mrp) > 0
-            ? Number((((Number(cur.mrp) - cur.rate) / Number(cur.mrp)) * 100).toFixed(2))
-            : 0;
-        } else {
-          cur.articleId = '';
-          cur.isCustom = true;
-        }
-      }
+  // Custom Article mode me typed code ko existing article se auto-select mat karo.
+  // Example: NEO already 2*5 hai, lekin bill me NEO 6*9 banana hai.
+  if (cur.isCustom) {
+    cur.articleId = '';
+    cur.articleCode = String(value).trim().toUpperCase();
+  } else {
+    const selectedArticle = articles.find(
+      (a) => String(a._id) === String(value)
+    );
+
+    const code = selectedArticle
+      ? String(selectedArticle.articleCode || '').trim().toUpperCase()
+      : String(value).trim().toUpperCase();
+
+    cur.articleCode = code;
+
+    const art = selectedArticle || articles.find(
+      (a) => String(a.articleCode || '').trim().toUpperCase() === code
+    );
+
+    if (art) {
+      cur.isCustom = false;
+      cur.articleId = art._id || '';
+      cur.color = art.color || '';
+      cur.size = art.sizeRange || '6*9 (Gents)';
+      cur.mrp = Number(art.mrp || 0) > 0 ? String(art.mrp) : '';
+      cur.rate = Number(art.sellingPrice || art.wholesaleRate || 0);
+      cur.discountPercent =
+        cur.mrp !== '' && Number(cur.mrp) > 0
+          ? Number(
+              (
+                ((Number(cur.mrp) - cur.rate) / Number(cur.mrp)) *
+                100
+              ).toFixed(2)
+            )
+          : 0;
+    } else {
+      cur.articleId = '';
+      cur.isCustom = true;
+    }
+  }
+}
     }
 
     if (field === 'mrp' || field === 'discountPercent') {
@@ -2580,7 +2603,7 @@ useEffect(() => {
                   <tr key={idx}>
                     <td className="p-2.5">
                       {item.isCustom ? (
-                        <div className="flex gap-1">
+                        <div className="flex gap-1 w-32">
                           <input
                             className="w-full p-2 bg-slate-800 border border-amber-500 rounded-lg text-sm text-amber-300 uppercase font-bold"
                             placeholder="Enter Article"
@@ -2707,7 +2730,7 @@ useEffect(() => {
                     <tr key={rIdx}>
                       <td className="p-2.5">
                         {rItem.isCustom ? (
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 w-32">
                             <input
                               className="w-full p-2 bg-slate-800 border border-amber-500 rounded-lg text-sm text-amber-300 uppercase font-bold"
                               placeholder="Enter Article"
