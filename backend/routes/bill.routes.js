@@ -99,12 +99,18 @@ async function applyStockEffect(items, direction, session = null) {
       continue;
     }
 
-    const nextPairs = Number(stock.totalPairs || 0) + direction * pairs;
-    if (nextPairs < 0) {
-      throw new Error(`Insufficient stock for ${codeOf(item)} / ${sizeOf(item) || 'size'} / rate ₹${rateOf(item)}. Available: ${Number(stock.totalPairs || 0)} pairs.`);
-    }
+    const currentPairs = Number(stock.totalPairs || 0);
 
-    stock.totalPairs = nextPairs;
+if (direction === -1) {
+  // Bill banne par stock negative nahi hoga.
+  // Stock kam ho tab bhi bill save hoga.
+  stock.totalPairs = Math.max(0, currentPairs - pairs);
+} else {
+  // Return hone par stock add hoga.
+  stock.totalPairs = currentPairs + pairs;
+}
+
+    
     const perCarton = Math.max(1, Number(stock.pairsPerCarton || 12));
     stock.cartons = Math.floor(stock.totalPairs / perCarton);
     stock.loosePairs = stock.totalPairs % perCarton;
