@@ -302,6 +302,7 @@ function registerRoutes(app) {
           partyId: party._id,
           partyName: req.body.partyName || party.name,
           deliveryMode: req.body.deliveryMode || '',
+          deliveryDate: req.body.deliveryDate || null,
           items,
           returnItems,
           rawTotal,
@@ -335,6 +336,13 @@ function registerRoutes(app) {
           ['cashPaid', 'onlinePaid', 'advancePaid'].forEach((key) => {
             if (req.body[key] !== undefined) updatePayload[key] = money(req.body[key]);
           });
+          if (req.body.deliveryDate !== undefined) {
+  updatePayload.deliveryDate = req.body.deliveryDate || null;
+}
+
+if (req.body.deliveryStatus !== undefined) {
+  updatePayload.deliveryStatus = req.body.deliveryStatus;
+}
           if (req.body.amountPaid !== undefined && req.body.cashPaid === undefined && req.body.onlinePaid === undefined && req.body.advancePaid === undefined) {
             updatePayload.amountPaid = money(req.body.amountPaid);
           }
@@ -365,6 +373,9 @@ function registerRoutes(app) {
           partyId: newParty._id,
           partyName: req.body.partyName !== undefined ? req.body.partyName : existing.partyName,
           deliveryMode: req.body.deliveryMode !== undefined ? req.body.deliveryMode : existing.deliveryMode,
+          deliveryDate: req.body.deliveryDate !== undefined
+  ? req.body.deliveryDate
+  : existing.deliveryDate,
           items,
           returnItems,
           rawTotal,

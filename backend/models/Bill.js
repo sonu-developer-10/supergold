@@ -17,7 +17,9 @@ const billSchema = new mongoose.Schema({
   onlinePaid: { type: Number, default: 0 },
   amountPaid: { type: Number, default: 0 },
   dueBalance: { type: Number, default: 0 },
-  billDate: { type: Date, default: Date.now }
+  billDate: { type: Date, default: Date.now },
+  deliveryDate: { type: Date, default: null },
+  deliveryStatus: { type: String, enum: ['Pending', 'Delivered'], default: 'Pending' }
 });
 billSchema.index({ billNo: 1 }, { unique: true });
 

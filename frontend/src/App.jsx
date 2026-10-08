@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Building2, LayoutDashboard, Receipt, Package, Users, Tag,
+  Building2, LayoutDashboard, Receipt, Package, Users, Tag, Truck,
   Plus, Printer, ArrowLeft, Trash2, ShoppingBag, DollarSign, Wallet,
   UserCheck, Filter, Edit, Share2, Download, CheckSquare, Square, Send,
   Calendar, CheckCircle, XCircle, Clock, FileText, CreditCard, RotateCcw
@@ -551,6 +551,7 @@ useEffect(() => {
               ? [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }]
               : []),
             { id: 'billing', label: 'Create Bill', icon: Receipt },
+            { id: 'delivery', label: 'Delivery', icon: Truck },
             ...(user.role === 'admin' || user.role === 'special_staff'
               ? [{ id: 'articles', label: 'Articles', icon: Tag }]
               : []),
@@ -585,7 +586,7 @@ useEffect(() => {
       <main className="max-w-7xl mx-auto p-4 md:p-6">
         {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'dashboard' && <AdminDashboard bills={bills} partyPayments={partyPayments} parties={parties} stocks={stocks} articles={articles} sizeRanges={sizeRanges} onViewInvoice={handleOpenInvoice} onRefreshBills={fetchBills} onRefreshAll={fetchAllData} userRole={user.role} />}
         {activeTab === 'billing' && (
-          <BillingTab
+          <BillingTab 
             parties={parties}
             articles={articles}
             bills={bills}
@@ -597,13 +598,20 @@ useEffect(() => {
             isStaffMode={false}
           />
         )}
+        {activeTab === 'delivery' && (
+  <DeliveryTab
+    bills={bills}
+    onViewInvoice={handleOpenInvoice}
+    onRefresh={fetchAllData}
+  />
+)}
         {user.role === 'admin' && activeTab === 'stock' && <StockInwardTab articles={articles} stocks={stocks} sizeRanges={sizeRanges} setSizeRanges={setSizeRanges} onStockUpdated={fetchAllData} />}
         {activeTab === 'parties' && <PartiesTab parties={parties} onPartyAdded={fetchAllData} />}
         {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'articles' && <ArticlesTab articles={articles} stocks={stocks} sizeRanges={sizeRanges} setSizeRanges={setSizeRanges} onArticleAdded={fetchAllData} />}
         {(user.role === 'admin' || user.role === 'special_staff') && activeTab === 'staff' && <StaffTab staffList={staffList} onStaffUpdated={fetchStaff} />}
         {activeTab === 'invoiceView' && (
           <div className="flex justify-center w-full my-4">
-            <InvoiceView billId={selectedBillId} bills={bills} parties={parties} partyPayments={partyPayments} onBack={() => setActiveTab(invoiceReturnTab)} />
+            <InvoiceView billId={selectedBillId} bills={bills} parties={parties} partyPayments={partyPayments} onBack={() => setActiveTab(invoiceReturnTab)} onRefreshBills={fetchAllData} />
           </div>
         )}
       </main>
@@ -884,6 +892,11 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
   const [cashPaid, setCashPaid] = useState(String(Number(bill.cashPaid || 0)));
   const [onlinePaid, setOnlinePaid] = useState(String(Number(bill.onlinePaid || 0)));
   const [advancePaid, setAdvancePaid] = useState(String(Number(bill.advancePaid || 0)));
+  const [deliveryDate, setDeliveryDate] = useState(
+  bill.deliveryDate
+    ? new Date(bill.deliveryDate).toISOString().slice(0, 10)
+    : ''
+);
   const [saving, setSaving] = useState(false);
 
   
@@ -1025,6 +1038,7 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
       const payload = {
         partyId: selectedParty,
         partyName: party?.name || bill.partyName || '',
+        deliveryDate,
         items: items.map((item) => ({ ...item, totalPairs: Number(item.totalPairs || 0), totalAmount: Number(item.totalAmount || 0) })),
         returnItems: returnItems.map((item) => ({ ...item, totalPairs: Number(item.totalPairs || 0), totalAmount: Number(item.totalAmount || 0) })),
         rawTotal,
@@ -1072,7 +1086,7 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
         </div>
 
         <div className="p-5 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
             <div>
               <label className="block text-xs font-bold text-slate-300 mb-1.5">Party</label>
               <select value={selectedParty} onChange={(e) => changeParty(e.target.value)} className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-semibold">
@@ -1083,6 +1097,17 @@ const [previousBalance, setPreviousBalance] = useState(initialPreviousBalance);
               <label className="block text-xs font-bold text-slate-300 mb-1.5">Previous Ledger Due</label>
               <input value={`₹${Number(previousBalance || 0).toFixed(2)}`} readOnly className="w-full p-3 bg-rose-950/30 border border-rose-800/50 text-rose-300 font-black rounded-xl" />
             </div>
+            <div>
+  <label className="block text-xs font-bold text-slate-300 mb-1.5">
+    Delivery Date
+  </label>
+  <input
+    type="date"
+    value={deliveryDate}
+    onChange={(e) => setDeliveryDate(e.target.value)}
+    className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-semibold"
+  />
+</div>
           </div>
 
           <div className="space-y-3">
@@ -1732,6 +1757,174 @@ function SearchableBillingDropdown({ value, options, onChange, placeholder='Sear
   );
 }
 
+function DeliveryTab({ bills, onViewInvoice, onRefresh }) {
+  const notify = useToast();
+
+  const getDateKey = (value) => {
+    if (!value) return '';
+
+    if (typeof value === 'string') {
+      return value.slice(0, 10);
+    }
+
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const todayKey = getDateKey(new Date());
+
+  const todayDeliveries = (Array.isArray(bills) ? bills : [])
+    .filter((bill) => {
+      return (
+        getDateKey(bill.deliveryDate) === todayKey &&
+        String(bill.deliveryStatus || 'Pending') === 'Pending'
+      );
+    })
+    .sort((a, b) => Number(a.billNo || 0) - Number(b.billNo || 0));
+
+  const markDelivered = async (bill) => {
+    if (!window.confirm(`${bill.partyName || 'Party'} ki delivery complete mark karni hai?`)) {
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`${API_BASE}/bills/${bill._id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          deliveryStatus: 'Delivered'
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.error || data.message || 'Delivery update failed');
+      }
+
+      notify('Delivery completed successfully!');
+
+      if (onRefresh) {
+        await onRefresh();
+      }
+    } catch (err) {
+      notify(err.message || 'Delivery update failed', 'error');
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-black text-white flex items-center gap-2">
+            🚚 Delivery
+          </h2>
+          <p className="text-xs text-slate-400 mt-1">
+            Aaj deliver hone wale pending bills
+          </p>
+        </div>
+
+        <div className="px-3 py-2 rounded-xl bg-amber-950/40 border border-amber-800/60 text-amber-300 text-xs font-black">
+          {todayDeliveries.length} Pending
+        </div>
+      </div>
+
+      {todayDeliveries.length === 0 ? (
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-8 text-center">
+          <div className="text-4xl mb-3">🚚</div>
+          <p className="text-white font-bold">
+            Aaj koi pending delivery nahi hai.
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            Delivery Date wale bills yahan automatically dikhenge.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {todayDeliveries.map((bill) => {
+            const total = Number(bill.todayTotal || 0);
+            const paid =
+              Number(bill.cashPaid || 0) +
+              Number(bill.onlinePaid || 0) +
+              Number(bill.advancePaid || 0);
+
+            const due = Math.max(
+              0,
+              total + Number(bill.previousBalance || 0) - paid
+            );
+
+            return (
+              <div
+                key={bill._id}
+                className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 shadow-xl"
+              >
+                <button
+                  type="button"
+                  onClick={() => onViewInvoice(bill._id)}
+                  className="w-full text-left"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-white">
+                        {bill.partyName || 'Unknown Party'}
+                      </h3>
+
+                      <p className="text-xs text-slate-400 mt-1">
+                        Bill #{bill.billNo || '-'}
+                      </p>
+                    </div>
+
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-black">
+                      TODAY
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 mt-5">
+                    <div className="bg-slate-800/50 rounded-xl p-3">
+                      <p className="text-[10px] text-slate-500 font-bold">
+                        BILL TOTAL
+                      </p>
+                      <p className="text-sm text-white font-black mt-1">
+                        ₹{total.toFixed(2)}
+                      </p>
+                    </div>
+
+                    <div className="bg-rose-950/30 border border-rose-800/30 rounded-xl p-3">
+                      <p className="text-[10px] text-slate-500 font-bold">
+                        DUE
+                      </p>
+                      <p className="text-sm text-rose-300 font-black mt-1">
+                        ₹{due.toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 text-xs text-amber-400 font-bold">
+                    Click here to open bill →
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => markDelivered(bill)}
+                  className="w-full mt-4 py-2.5 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 font-black text-xs hover:bg-emerald-600/30 transition"
+                >
+                  ✓ Mark Delivered
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== BILLING TERMINAL ====================
 function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBillCreated, onViewInvoice, onRefreshParties, isStaffMode }) {
   const notify = useToast();
@@ -1753,6 +1946,10 @@ function BillingTab({ parties, articles, bills, sizeRanges, setSizeRanges, onBil
   const [newPartyPhone, setNewPartyPhone] = useState('');
 
   const [discountAmount, setDiscountAmount] = useState('0');
+  const [deliveryDate, setDeliveryDate] = useState(() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+});
 
   const [items, setItems] = useState([
     { articleCode: '', articleId: '', isCustom: false, size: '6*9 (Gents)', color: '', cartons: 0, loosePairs: 0, totalPairs: 0, mrp: '', discountPercent: 0, rate: 0, totalAmount: 0 }
@@ -1806,6 +2003,7 @@ useEffect(() => {
       setCashPaid(draft.cashPaid ?? '');
       setOnlinePaid(draft.onlinePaid ?? '');
       setAdvancePaid(draft.advancePaid ?? '');
+      setDeliveryDate(draft.deliveryDate || deliveryDate);
     }
   } catch (err) {
     console.error('Billing draft restore failed:', err);
@@ -1826,7 +2024,8 @@ useEffect(() => {
       returnItems,
       cashPaid,
       onlinePaid,
-      advancePaid
+      advancePaid,
+      deliveryDate,
     };
 
     localStorage.setItem(
@@ -1844,7 +2043,8 @@ useEffect(() => {
   returnItems,
   cashPaid,
   onlinePaid,
-  advancePaid
+  advancePaid,
+  deliveryDate,
 ]);
 
 // Restore latest party information after billing draft restore
@@ -2205,6 +2405,7 @@ useEffect(() => {
     const payload = {
       partyId: selectedParty,
       partyName: partyInfo ? partyInfo.name : '',
+      deliveryDate,
       items,
       returnItems,
       rawTotal,
@@ -2267,7 +2468,7 @@ useEffect(() => {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
           <div>
             <label className="block text-xs font-bold text-slate-300 mb-1.5">Select Wholesale Party *</label>
             <SearchableBillingDropdown
@@ -2290,6 +2491,17 @@ useEffect(() => {
             <label className="block text-xs font-bold text-slate-300 mb-1.5">Previous Ledger Due</label>
             <input className="w-full p-3 bg-rose-950/30 border border-rose-800/50 text-rose-400 font-black rounded-xl text-sm" value={`₹${Number(previousBalance).toFixed(2)}`} readOnly disabled />
           </div>
+          <div>
+  <label className="block text-xs font-bold text-slate-300 mb-1.5">
+    Delivery Date
+  </label>
+  <input
+    type="date"
+    className="w-full p-3 bg-slate-800 border border-slate-700 text-white rounded-xl text-sm"
+    value={deliveryDate}
+    onChange={(e) => setDeliveryDate(e.target.value)}
+  />
+</div>
         </div>
 
         {selectedParty && showLastBills && (
@@ -2692,13 +2904,17 @@ useEffect(() => {
 }
 
 // ==================== INVOICE PRINT & MULTI-WHATSAPP SHARE VIEW WITH PDF ====================
-function InvoiceView({ billId, bills, parties, partyPayments, onBack }) {
+function InvoiceView({ billId, bills, parties, partyPayments, onBack, onRefreshBills }) {
   const notify = useToast();
   const bill = bills.find((b) => b._id === billId);
   const [showShareModal, setShowShareModal] = useState(false);
   const [selectedPhones, setSelectedPhones] = useState([]);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [shareType, setShareType] = useState('invoice');
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+const [paymentCash, setPaymentCash] = useState('');
+const [paymentOnline, setPaymentOnline] = useState('');
+const [isSavingPayment, setIsSavingPayment] = useState(false);
   const invoiceRef = useRef(null);
 
   if (!bill) return <div className="text-white text-center p-10">Bill not found!</div>;
@@ -2717,6 +2933,61 @@ const partyPaymentAdjusted = (partyPayments || [])
     return paymentDate <= billDate;
   })
   .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+  const handleSaveDeliveryPayment = async () => {
+  const cash = Math.max(0, Number(paymentCash || 0));
+  const online = Math.max(0, Number(paymentOnline || 0));
+
+  if (cash === 0 && online === 0) {
+    notify('Payment amount enter karo', 'error');
+    return;
+  }
+
+  try {
+    setIsSavingPayment(true);
+
+    const newCashPaid =
+      Number(bill.cashPaid || 0) + cash;
+
+    const newOnlinePaid =
+      Number(bill.onlinePaid || 0) + online;
+
+    const res = await apiFetch(`${API_BASE}/bills/${bill._id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        cashPaid: newCashPaid,
+        onlinePaid: newOnlinePaid,
+        advancePaid: Number(bill.advancePaid || 0)
+      })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(
+        data.error || data.message || 'Payment save failed'
+      );
+    }
+
+    notify('Payment saved successfully!');
+
+    setPaymentCash('');
+    setPaymentOnline('');
+    setShowPaymentModal(false);
+
+    if (onRefreshBills) {
+      await onRefreshBills();
+    }
+  } catch (err) {
+    console.error('Delivery payment error:', err);
+    notify(err.message || 'Payment save failed', 'error');
+  } finally {
+    setIsSavingPayment(false);
+  }
+};
 
   // Generate PDF Invoice
 const handleDownloadPdf = async () => {
@@ -3129,9 +3400,16 @@ const handleSendToSelected = (phone, type = 'invoice') => {
             <button
   onClick={() => handleOpenMultiShare('receipt')}
   className="bg-sky-600 hover:bg-sky-700 text-white px-3.5 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow transition"
->
-  💰 Payment Receipt
+>Payment Receipt
 </button>
+<button
+  onClick={() => {
+    setPaymentCash('');
+    setPaymentOnline('');
+    setShowPaymentModal(true);
+  }}
+  className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow transition"
+>💵 Payment</button>
           </div>
           <div className="w-full sm:w-64 space-y-1 text-right">
             <div className="flex justify-between text-slate-600"><span>Sale Subtotal:</span><span>₹{Number(bill.rawTotal).toFixed(2)}</span></div>
@@ -3224,9 +3502,97 @@ const handleSendToSelected = (phone, type = 'invoice') => {
           </div>
         </div>
       )}
+      {showPaymentModal && (
+  <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center z-50 p-4">
+    <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-md space-y-4">
+
+      <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+        <div>
+          <h3 className="text-lg font-black text-white">
+            💵 Take Payment
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Bill #{bill.billNo} • {bill.partyName}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowPaymentModal(false)}
+          className="text-slate-400 hover:text-white font-bold"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-3">
+        <div className="flex justify-between text-xs">
+          <span className="text-slate-400">Current Due</span>
+          <span className="text-rose-300 font-black">
+            ₹{Number(bill.dueBalance || 0).toFixed(2)}
+          </span>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-300 mb-1.5">
+          Cash Payment
+        </label>
+
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={paymentCash}
+          onChange={(e) => setPaymentCash(e.target.value)}
+          placeholder="0"
+          className="w-full p-3 bg-slate-800 border border-slate-700 text-white rounded-xl text-sm"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-300 mb-1.5">
+          Online Payment
+        </label>
+
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={paymentOnline}
+          onChange={(e) => setPaymentOnline(e.target.value)}
+          placeholder="0"
+          className="w-full p-3 bg-slate-800 border border-slate-700 text-white rounded-xl text-sm"
+        />
+      </div>
+
+      <div className="flex gap-2 pt-2">
+        <button
+          type="button"
+          onClick={() => setShowPaymentModal(false)}
+          className="flex-1 py-3 rounded-xl bg-slate-800 text-slate-300 font-bold text-sm"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={handleSaveDeliveryPayment}
+          disabled={isSavingPayment}
+          className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm disabled:opacity-50"
+        >
+          {isSavingPayment ? 'Saving...' : 'Save Payment'}
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
     </div>
   );
 }
+
+
 
 // ==================== STAFF & EXPENSES MANAGEMENT TAB (UPGRADED) ====================
 function StaffTab({ staffList, onStaffUpdated }) {
@@ -3646,6 +4012,7 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
   const notify = useToast();
   const [form, setForm] = useState({ articleId: '', articleCode: '', brand: '', color: '', sizeRange: '6*9 (Gents)', mrp: '', purchaseDiscountPercent: 0, purchaseRate: 0, sellingDiscountPercent: 0, wholesaleRate: 0, sellingPrice: 0, pairsInPeti: 12, cartons: 0, loosePairs: 0 });
   const [editingArticleId, setEditingArticleId] = useState(null);
+  const [isCreatingVariant, setIsCreatingVariant] = useState(false);
   const articleFormRef = useRef(null);
   const [showCustomSizeModal, setShowCustomSizeModal] = useState(false);
   const [paymentBill, setPaymentBill] = useState(null);
@@ -3678,6 +4045,7 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
     }
 
     setEditingArticleId(selectedArt._id || null);
+    setIsCreatingVariant(false);
     setForm({
       articleId: selectedArt._id || '',
       articleCode: code,
@@ -3713,6 +4081,26 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
     setCustomSizeInput('');
     setShowCustomSizeModal(false);
   };
+
+  const handleCreateNewVariant = () => {
+  const currentCode = String(form.articleCode || '').trim().toUpperCase();
+
+  if (!currentCode) {
+    notify('Pehle Article Code select karein.', 'error');
+    return;
+  }
+
+  setEditingArticleId(null);
+  setIsCreatingVariant(true);
+
+  setForm({
+    ...form,
+    articleId: '',
+    articleCode: currentCode,
+    cartons: 0,
+    loosePairs: 0
+  });
+};
 
   const updatePurchaseDiscount = (value) => {
     const percent = Math.max(0, Number(value || 0));
@@ -3755,6 +4143,7 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
         onArticleAdded();
         setForm({ articleId: '', articleCode: '', brand: '', color: '', sizeRange: '6*9 (Gents)', mrp: '', purchaseDiscountPercent: 0, purchaseRate: 0, sellingDiscountPercent: 0, wholesaleRate: 0, sellingPrice: 0, pairsInPeti: 12, cartons: 0, loosePairs: 0 });
         setEditingArticleId(null);
+        setIsCreatingVariant(false);
       }
     } catch (err) { notify('Error saving article', 'error'); }
   };
@@ -3814,6 +4203,15 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
               customValueLabel="Use new Article Code"
               className="w-full"
             />
+            {editingArticleId && (
+  <button
+    type="button"
+    onClick={handleCreateNewVariant}
+    className="mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-black"
+  >
+    + Create New Variant
+  </button>
+)}
             <input
               tabIndex={-1}
               aria-hidden="true"
