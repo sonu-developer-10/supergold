@@ -442,6 +442,13 @@ useEffect(() => {
 };
 
   const fetchParties = () => apiFetch(`${API_BASE}/parties`).then(r => r.json()).then(d => setParties(Array.isArray(d) ? d : []));
+  // const fetchParties = () =>
+  // apiFetch(`${API_BASE}/parties`)
+  //   .then(r => r.json())
+  //   .then(d => {
+  //     console.log('PARTIES DATA:', d);
+  //     setParties(Array.isArray(d) ? d : []);
+  //   });
   const fetchArticles = () => apiFetch(`${API_BASE}/articles`).then(r => r.json()).then(d => setArticles(Array.isArray(d) ? d : []));
   const fetchBills = () => apiFetch(`${API_BASE}/bills`).then(r => r.json()).then(d => setBills(Array.isArray(d) ? d : []));
   const fetchPartyPayments = async () => {
@@ -4643,24 +4650,50 @@ function PartiesTab({ parties, onPartyAdded }) {
   });
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const url = editingId ? `${API_BASE}/parties/${editingId}` : `${API_BASE}/parties`;
-      const method = editingId ? 'PUT' : 'POST';
+  e.preventDefault();
+  try {
+    const url = editingId
+      ? `${API_BASE}/parties/${editingId}`
+      : `${API_BASE}/parties`;
 
-      const res = await apiFetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+    const method = editingId ? 'PUT' : 'POST';
+
+    const payload = editingId
+  ? {
+      name: form.name,
+      phone: form.phone,
+      city: form.city,
+      currentBalance: form.currentBalance
+    }
+  : {
+      name: form.name,
+      phone: form.phone,
+      city: form.city,
+      openingBalance: form.openingBalance
+    };
+
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      notify(editingId ? 'Party Details Updated!' : 'New Party Added!');
+      onPartyAdded();
+      setForm({
+        name: '',
+        phone: '',
+        city: '',
+        openingBalance: 0,
+        currentBalance: 0
       });
-      if (res.ok) {
-        notify(editingId ? 'Party Details Updated!' : 'New Party Added!');
-        onPartyAdded();
-        setForm({ name: '', phone: '', city: '', openingBalance: 0, currentBalance: 0 });
-        setEditingId(null);
-      }
-    } catch (err) { notify('Error saving party', 'error'); }
-  };
+      setEditingId(null);
+    }
+  } catch (err) {
+    notify('Error saving party', 'error');
+  }
+};
 
   const handleEdit = (p) => {
   setEditingId(p._id);
