@@ -1,6 +1,8 @@
 const Staff = require('../models/Staff.js');
 const StaffRecord = require('../models/StaffRecord.js');
 const StaffSalaryPayment = require('../models/StaffSalaryPayment.js');
+const StaffLeave = require('../models/StaffLeave.js');
+
 
 function registerRoutes(app) {
 // --- STAFF & EXPENSE ROUTES ---
@@ -157,6 +159,129 @@ app.delete('/api/staff-salary-payments/:id', async (req, res) => {
     res.json({ message: 'Salary payment deleted' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+// --- STAFF LEAVE MANAGEMENT ROUTES ---
+
+// Leave list: authenticated Admin only
+app.get('/api/staff-leaves', async (req, res) => {
+try {
+if (req.user?.role !== 'admin') {
+return res.status(403).json({ error: 'Admin access required.' });
+}
+
+const filter = {};
+if (req.query.staffId) filter.staffId = req.query.staffId;
+
+if (req.query.month) {
+  const month = String(req.query.month);
+  const monthStart = `${month}-01`;
+  const nextMonthDate = new Date(`${month}-01T00:00:00`);
+  nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
+  const nextMonth = `${nextMonthDate.getFullYear()}-${String(
+    nextMonthDate.getMonth() + 1
+  ).padStart(2, '0')}-01`;
+
+  filter.startDate = { $lt: nextMonth };
+  filter.endDate = { $gte: monthStart };
+}
+
+const leaves = await StaffLeave.find(filter)
+  .sort({ createdAt: -1 });
+
+res.json(leaves);
+
+
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
+});
+
+// Create leave request
+app.post('/api/staff-leaves', async (req, res) => {
+try {
+if (req.user?.role !== 'admin') {
+return res.status(403).json({ error: 'Admin access required.' });
+}
+
+
+const { staffId, startDate, endDate, reason } = req.body;
+
+if (!staffId || !startDate || !endDate) {
+  return res.status(400).json({
+    error: 'Staff, start date and end date are required.'
+  });
+}
+
+if (
+  !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+  !/^\d{4}-\d{2}-\d{2}$/.test(endDate) ||
+  startDate > endDate
+) {
+  return res.status(400).json({ error: 'Invalid leave dates.' });
+}
+
+const staff = await Staff.findById(staffId);
+if (!staff) {
+  return res.status(404).json({ error: 'Staff not found.' });
+}
+
+const leave = await StaffLeave.create({
+  staffId,
+  startDate,
+  endDate,
+  reason: reason || '',
+  status: 'Pending'
+});
+
+res.status(201).json(leave);
+
+
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
+});
+
+// Approve or reject leave — Admin only
+app.patch('/api/staff-leaves/:id/status', async (req, res) => {
+try {
+if (req.user?.role !== 'admin') {
+return res.status(403).json({ error: 'Admin access required.' });
+}
+
+
+const { status } = req.body;
+
+if (!['Approved', 'Rejected'].includes(status)) {
+  return res.status(400).json({
+    error: 'Status must be Approved or Rejected.'
+  });
+}
+
+const leave = await StaffLeave.findByIdAndUpdate(
+  req.params.id,
+  {
+    $set: {
+      status,
+      reviewedBy: req.user.username || 'Admin',
+      reviewedAt: new Date()
+    }
+  },
+  { new: true, runValidators: true }
+);
+
+if (!leave) {
+  return res.status(404).json({ error: 'Leave request not found.' });
+}
+
+res.json(leave);
+
+
+} catch (err) {
+res.status(500).json({ error: err.message });
+}
+});
+
 
 }
 

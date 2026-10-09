@@ -1759,7 +1759,7 @@ const totalReceived = totalCash + totalOnline;
 }
 
 // Professional searchable dropdown used in Billing (Article / Size / Party).
-function SearchableBillingDropdown({ value, options, onChange, placeholder='Search...', className='', renderOption, allowCustomValue=false, customValueLabel='Use typed value' }) {
+function SearchableBillingDropdown({ value, options, onChange, placeholder='Search...', className='', renderOption, allowCustomValue=false, customValueLabel='Use typed value', displaySelectedLabel = false }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [menuStyle, setMenuStyle] = useState({});
@@ -1803,8 +1803,17 @@ function SearchableBillingDropdown({ value, options, onChange, placeholder='Sear
     };
   }, [open]);
 
-  const selected = options.find(o => String(o.value) === String(value));
-  const label = selected ? selected.label : (value || '');
+  const selected = options.find(
+  (o) => String(o.value) === String(value)
+);
+
+const label = selected
+  ? (
+      displaySelectedLabel
+        ? String(selected.label).split(' • ')[0]
+        : selected.label
+    )
+  : (value || '');
   // Reopening shows the selected value; search text is used only after typing.
   const displayValue = open && query !== '' ? query : label;
   const filtered = options.filter(o => String(o.label).toLowerCase().includes(query.toLowerCase()));
@@ -2813,13 +2822,17 @@ useEffect(() => {
                         <SearchableBillingDropdown
                           value={item.articleId || item.articleCode}
                           onChange={(value) => handleItemChange(idx, 'articleCode', value)}
+                          displaySelectedLabel={true}
                           placeholder="Search article..."
                           className="md:w-40 w-32"
                           allowCustomValue
                           customValueLabel="Use new Article Code"
                           options={[
                             { value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' },
-                            ...articles.map((a) => ({ value: a._id || a.articleCode, label: `${String(a.articleCode || '').toUpperCase()} • ${a.sizeRange || ''} • ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}` }))
+                            ...articles.map((a) => ({
+  value: a._id || a.articleCode,
+  label: `${String(a.articleCode || '').toUpperCase()} •  ${a.brand || 'N/A'} •  ${a.sizeRange || ''}  ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}`
+}))
                             
                           ]}
                         />
@@ -3836,6 +3849,17 @@ function StaffTab({ staffList, onStaffUpdated }) {
   const [records, setRecords] = useState({});
   const [expenses, setExpenses] = useState([]);
   const [salaryPayments, setSalaryPayments] = useState([]);
+  const [staffLeaves, setStaffLeaves] = useState([]);
+const [showLeaveModal, setShowLeaveModal] = useState(false);
+const [leaveSubmitting, setLeaveSubmitting] = useState(false);
+const [reviewingLeaveId, setReviewingLeaveId] = useState('');
+
+const [leaveForm, setLeaveForm] = useState({
+  staffId: '',
+  startDate: getToday(),
+  endDate: getToday(),
+  reason: ''
+});
   const [loadingRecords, setLoadingRecords] = useState(false);
 
   const [showAddStaffModal, setShowAddStaffModal] = useState(false);
@@ -3879,15 +3903,18 @@ function StaffTab({ staffList, onStaffUpdated }) {
   const loadMonthData = async () => {
     setLoadingRecords(true);
     try {
-      const [recordsRes, expensesRes, paymentsRes] = await Promise.all([
-        apiFetch(`${API_BASE}/staff-records?all=true`),
-        apiFetch(`${API_BASE}/expenses?month=${selectedMonth}`),
-        apiFetch(`${API_BASE}/staff-salary-payments?all=true`)
-      ]);
+      const [recordsRes, expensesRes, paymentsRes, leavesRes] = await Promise.all([
+  apiFetch(`${API_BASE}/staff-records?all=true`),
+  apiFetch(`${API_BASE}/expenses?month=${selectedMonth}`),
+  apiFetch(`${API_BASE}/staff-salary-payments?all=true`),
+  apiFetch(`${API_BASE}/staff-leaves?month=${selectedMonth}`)
+]);
 
       const recordsData = recordsRes.ok ? await recordsRes.json() : [];
       const expensesData = expensesRes.ok ? await expensesRes.json() : [];
       const paymentsData = paymentsRes.ok ? await paymentsRes.json() : [];
+      const leavesData = leavesRes.ok ? await leavesRes.json() : [];
+setStaffLeaves(Array.isArray(leavesData) ? leavesData : []);
 
       const grouped = {};
       (Array.isArray(recordsData) ? recordsData : []).forEach(r => {
@@ -3907,6 +3934,105 @@ function StaffTab({ staffList, onStaffUpdated }) {
   };
 
   useEffect(() => { loadMonthData(); }, [selectedMonth]);
+
+  
+  
+const submitLeaveRequest = async () => {
+  if (leaveSubmitting) return;
+
+  if (!leaveForm.staffId || !leaveForm.startDate || !leaveForm.endDate) {
+    notify('Staff aur leave dates select karo.', 'error');
+    return;
+  }
+
+  if (leaveForm.endDate < leaveForm.startDate) {
+    notify('End date, start date se pehle nahi ho sakti.', 'error');
+    return;
+  }
+
+  setLeaveSubmitting(true);
+
+  try {
+    const res = await apiFetch(`${API_BASE}/staff-leaves`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(leaveForm)
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      notify(data.message || `Leave request save nahi hui (${res.status}).`, 'error');
+      return;
+    }
+
+    setShowLeaveModal(false);
+    setLeaveForm({
+      staffId: '',
+      startDate: getToday(),
+      endDate: getToday(),
+      reason: ''
+    });
+
+    await loadMonthData();
+    notify('Leave request save ho gayi.', 'success');
+  } catch (err) {
+    console.error('Submit leave request error:', err);
+    notify('Leave request save nahi hui. Network/API error check karo.', 'error');
+  } finally {
+    setLeaveSubmitting(false);
+  }
+};
+
+  
+
+const reviewLeaveRequest = async (leaveId, status) => {
+  if (!leaveId || reviewingLeaveId) return;
+
+  if (!['Approved', 'Rejected'].includes(status)) {
+    notify('Invalid leave status.', 'error');
+    return;
+  }
+
+  setReviewingLeaveId(leaveId);
+
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/staff-leaves/${leaveId}/status`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      }
+    );
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      console.error('Leave review API failed:', res.status, data);
+      notify(
+        data.message || `Leave update fail hua. Server status: ${res.status}`,
+        'error'
+      );
+      return;
+    }
+
+    // API success hone par latest leave list reload karo.
+    await loadMonthData();
+
+    notify(
+      status === 'Approved'
+        ? 'Leave approve ho gayi.'
+        : 'Leave reject ho gayi.',
+      'success'
+    );
+  } catch (err) {
+    console.error('Leave review error:', err);
+    notify('Leave update nahi hui. Network ya server error check karo.', 'error');
+  } finally {
+    setReviewingLeaveId('');
+  }
+};
 
   const refreshEverything = async () => {
     await Promise.all([loadMonthData(), onStaffUpdated()]);
@@ -3936,24 +4062,121 @@ function StaffTab({ staffList, onStaffUpdated }) {
     }
     return salary;
   };
+  
+  const getApprovedLeaveDaysForMonth = (staffId, month) => {
+    const dates = new Set();
 
+    (Array.isArray(staffLeaves) ? staffLeaves : []).forEach(leave => {
+      if (
+        String(leave.staffId?._id || leave.staffId) !== String(staffId) ||
+        leave.status !== 'Approved'
+      ) {
+        return;
+      }
+
+      const start = new Date(`${String(leave.startDate).slice(0, 10)}T00:00:00`);
+      const end = new Date(`${String(leave.endDate).slice(0, 10)}T00:00:00`);
+
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+        return;
+      }
+
+      const date = new Date(start);
+
+      while (date <= end) {
+        const year = date.getFullYear();
+        const monthNumber = String(date.getMonth() + 1).padStart(2, '0');
+        const dayNumber = String(date.getDate()).padStart(2, '0');
+        const dateKey = `${year}-${monthNumber}-${dayNumber}`;
+
+        if (dateKey.startsWith(`${month}-`)) {
+          dates.add(dateKey);
+        }
+
+        date.setDate(date.getDate() + 1);
+      }
+    });
+
+    return [...dates].sort();
+  };
+
+  
   const getPayrollForMonth = (st, month) => {
     const rows = attendanceRecords(st._id, month);
-    const advances = advanceRecords(st._id, month).reduce((sum, r) => sum + Number(r.advanceAmount || 0), 0);
-    const payments = salaryPayments.filter(p => String(p.staffId) === String(st._id) && String(p.month) === String(month));
-    const paid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+    const advances = advanceRecords(st._id, month).reduce(
+      (sum, r) => sum + Number(r.advanceAmount || 0),
+      0
+    );
+
+    const payments = salaryPayments.filter(
+      p =>
+        String(p.staffId?._id || p.staffId) === String(st._id) &&
+        String(p.month) === String(month)
+    );
+
+    const paid = payments.reduce(
+      (sum, p) => sum + Number(p.amount || 0),
+      0
+    );
+
     const days = monthDays(month);
-    const absent = rows.filter(r => r.status === 'Absent').length;
-    const half = rows.filter(r => r.status === 'Half-Day' || r.status === 'Half Day').length;
-    const present = Math.max(0, days - absent - half);
     const baseSalary = getEffectiveBaseSalary(st, month);
     const dailyRate = days > 0 ? baseSalary / days : 0;
+
+    // Approved leave dates for this staff member and month
+    const approvedLeaveDates = getApprovedLeaveDaysForMonth(st._id, month);
+    const leaveDateSet = new Set(approvedLeaveDates);
+
+    // First 2 approved leave days per calendar month are paid
+    const paidLeaveDays = Math.min(2, approvedLeaveDates.length);
+    const unpaidLeaveDays = Math.max(0, approvedLeaveDates.length - 2);
+    const leaveDeduction = unpaidLeaveDays * dailyRate;
+
+    // Don't deduct attendance absence again on an approved leave date
+    const absent = rows.filter(
+      r => r.status === 'Absent' && !leaveDateSet.has(String(r.date).slice(0, 10))
+    ).length;
+
+    const half = rows.filter(
+      r =>
+        (r.status === 'Half-Day' || r.status === 'Half Day') &&
+        !leaveDateSet.has(String(r.date).slice(0, 10))
+    ).length;
+
+    const present = Math.max(0, days - absent - half);
+
     const absenceDeduction = absent * dailyRate;
     const halfDayDeduction = half * dailyRate * 0.5;
-    const grossAfterAttendance = Math.max(0, baseSalary - absenceDeduction - halfDayDeduction);
+
+    const grossAfterAttendance = Math.max(
+      0,
+      baseSalary - absenceDeduction - halfDayDeduction - leaveDeduction
+    );
+
     const netPayable = Math.max(0, grossAfterAttendance - advances);
     const remaining = Math.max(0, netPayable - paid);
-    return { month, days, present, absent, half, baseSalary, dailyRate, absenceDeduction, halfDayDeduction, advances, paid, grossAfterAttendance, netPayable, remaining, payments };
+
+    return {
+      month,
+      days,
+      present,
+      absent,
+      half,
+      baseSalary,
+      dailyRate,
+      absenceDeduction,
+      halfDayDeduction,
+      paidLeaveDays,
+      unpaidLeaveDays,
+      leaveDeduction,
+      advances,
+      paid,
+      grossAfterAttendance,
+      netPayable,
+      remaining,
+      payments
+    };
   };
 
   const getStaffStats = (st) => {
@@ -4143,6 +4366,7 @@ function StaffTab({ staffList, onStaffUpdated }) {
                 const stats = getStaffStats(st); const entry = attendanceForDate(st._id, selectedDate);
                 return <tr key={st._id} className="hover:bg-slate-800/30">
                   <td className="p-3"><div className="font-bold text-white">{st.name}</div><div className="text-[10px] text-amber-400">{st.role || 'Staff'}</div></td>
+                  
                   <td className="p-3 font-bold text-white">₹{Number(st.monthlySalary || 0).toLocaleString()}</td>
                   <td className="p-3"><span className={`px-2 py-1 rounded-lg font-black ${entry.status === 'Present' ? 'bg-emerald-500/20 text-emerald-400' : entry.status === 'Absent' ? 'bg-rose-500/20 text-rose-400' : 'bg-amber-500/20 text-amber-400'}`}>{entry.status}{entry.isDefault ? ' • Default' : ''}</span></td>
                   <td className="p-3 font-bold text-emerald-400">{stats.present}</td><td className="p-3 font-bold text-rose-400">{stats.absent}</td><td className="p-3 font-bold text-amber-400">{stats.half}</td><td className="p-3 font-bold text-purple-400">₹{Math.round(stats.advances).toLocaleString()}</td>
@@ -4162,7 +4386,110 @@ function StaffTab({ staffList, onStaffUpdated }) {
         </div>
         {loadingRecords && <div className="text-xs text-slate-500 mt-3">Loading records...</div>}
       </div>
+     
+  {/* STAFF LEAVE MANAGEMENT */}
+  <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 mt-6">
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div>
+        <h3 className="text-lg font-bold text-white">Staff Leave Management</h3>
+        <p className="text-sm text-slate-400">
+          Har calendar month mein pehle 2 approved leave days paid hain.
+        </p>
+      </div>
 
+      
+<button
+  type="button"
+  onClick={() => {
+    setLeaveForm({
+      staffId: '',
+      startDate: getToday(),
+      endDate: getToday(),
+      reason: ''
+    });
+    setShowLeaveModal(true);
+  }}
+  className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold"
+>
+  + Leave Request
+</button>
+    </div>
+
+    {staffLeaves.length === 0 ? (
+      <p className="text-sm text-slate-400 py-4">Abhi koi leave request nahi hai.</p>
+    ) : (
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left">
+          <thead className="text-slate-400 border-b border-slate-700">
+            <tr>
+              <th className="p-3">Staff</th>
+              <th className="p-3">Start Date</th>
+              <th className="p-3">End Date</th>
+              <th className="p-3">Reason</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {staffLeaves.map(leave => {
+              const staff = staffList.find(
+                s => String(s._id) === String(leave.staffId?._id || leave.staffId)
+              );
+
+              return (
+                <tr key={leave._id} className="border-b border-slate-800">
+                  <td className="p-3 text-white">
+                    {staff?.name || leave.staffId?.name || 'Staff'}
+                  </td>
+                  <td className="p-3 text-slate-300">{String(leave.startDate).slice(0, 10)}</td>
+                  <td className="p-3 text-slate-300">{String(leave.endDate).slice(0, 10)}</td>
+                  <td className="p-3 text-slate-300">{leave.reason || '—'}</td>
+                  <td className="p-3">
+                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                      leave.status === 'Approved'
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : leave.status === 'Rejected'
+                        ? 'bg-red-500/15 text-red-400'
+                        : 'bg-amber-500/15 text-amber-400'
+                    }`}>
+                      {leave.status}
+                    </span>
+                  </td>
+                  <td className="p-3">
+                    
+
+{leave.status === 'Pending' ? (
+  <div className="flex flex-wrap gap-2">
+    <button
+      type="button"
+      disabled={Boolean(reviewingLeaveId)}
+      onClick={() => reviewLeaveRequest(leave._id, 'Approved')}
+      className="px-3 py-1 rounded-md bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {reviewingLeaveId === leave._id ? 'Updating...' : 'Approve'}
+    </button>
+
+    <button
+      type="button"
+      disabled={Boolean(reviewingLeaveId)}
+      onClick={() => reviewLeaveRequest(leave._id, 'Rejected')}
+      className="px-3 py-1 rounded-md bg-red-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {reviewingLeaveId === leave._id ? 'Updating...' : 'Reject'}
+    </button>
+  </div>
+) : (
+  <span className="text-slate-500">Reviewed</span>
+)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-slate-900/70 border border-slate-800 p-5 rounded-2xl shadow-xl">
           <h4 className="font-black text-white mb-3">Monthly Salary Calculation — {monthLabel}</h4>
@@ -4175,6 +4502,133 @@ function StaffTab({ staffList, onStaffUpdated }) {
         </div>
       </div>
 
+      
+{showLeaveModal && (
+  <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl">
+      <div className="flex items-center justify-between gap-3 mb-5">
+        <div>
+          <h3 className="text-lg font-black text-white">
+            Create Leave Request
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">
+            Staff aur leave ki dates select karo.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          disabled={leaveSubmitting}
+          onClick={() => setShowLeaveModal(false)}
+          className="text-slate-400 hover:text-white text-2xl disabled:opacity-50"
+        >
+          ×
+        </button>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submitLeaveRequest();
+        }}
+        className="space-y-4"
+      >
+        <div>
+          <label className="block text-sm text-slate-300 mb-1">
+            Staff *
+          </label>
+
+          <select
+            value={leaveForm.staffId}
+            onChange={(e) =>
+              setLeaveForm({ ...leaveForm, staffId: e.target.value })
+            }
+            className="w-full rounded-lg bg-slate-800 border border-slate-700 text-white p-3"
+            required
+          >
+            <option value="">Select staff</option>
+            {staffList.map((staff) => (
+              <option key={staff._id} value={staff._id}>
+                {staff.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">
+              Start Date *
+            </label>
+
+            <input
+              type="date"
+              value={leaveForm.startDate}
+              onChange={(e) =>
+                setLeaveForm({ ...leaveForm, startDate: e.target.value })
+              }
+              className="w-full rounded-lg bg-slate-800 border border-slate-700 text-white p-3"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">
+              End Date *
+            </label>
+
+            <input
+              type="date"
+              min={leaveForm.startDate}
+              value={leaveForm.endDate}
+              onChange={(e) =>
+                setLeaveForm({ ...leaveForm, endDate: e.target.value })
+              }
+              className="w-full rounded-lg bg-slate-800 border border-slate-700 text-white p-3"
+              required
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm text-slate-300 mb-1">
+            Reason
+          </label>
+
+          <textarea
+            value={leaveForm.reason}
+            onChange={(e) =>
+              setLeaveForm({ ...leaveForm, reason: e.target.value })
+            }
+            rows={3}
+            placeholder="Leave ka reason (optional)"
+            className="w-full rounded-lg bg-slate-800 border border-slate-700 text-white p-3"
+          />
+        </div>
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            disabled={leaveSubmitting}
+            onClick={() => setShowLeaveModal(false)}
+            className="px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            disabled={leaveSubmitting}
+            className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold disabled:opacity-50"
+          >
+            {leaveSubmitting ? 'Saving...' : 'Save Request'}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+)}
+
       {showAddStaffModal && <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center z-50 p-4"><div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-md"><h3 className="text-lg font-black text-white mb-4">Add Staff Member</h3><form onSubmit={handleAddStaffSubmit} className="space-y-3"><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Staff Name *" value={newStaff.name} onChange={e => setNewStaff({ ...newStaff,name:e.target.value })} required /><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Phone" value={newStaff.phone} onChange={e => setNewStaff({ ...newStaff,phone:e.target.value })} /><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Role / Designation" value={newStaff.role} onChange={e => setNewStaff({ ...newStaff,role:e.target.value })} /><div className="grid grid-cols-2 gap-2"><input type="number" min="0" className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-emerald-400 font-bold" placeholder="Monthly Salary" value={newStaff.monthlySalary} onChange={e => setNewStaff({ ...newStaff,monthlySalary:e.target.value })} required /><input type="date" className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" value={newStaff.joiningDate} onChange={e => setNewStaff({ ...newStaff,joiningDate:e.target.value })} /></div><div className="flex justify-end gap-2 pt-2"><button type="button" onClick={() => setShowAddStaffModal(false)} className="px-4 py-2 border border-slate-700 rounded-xl text-xs font-bold text-slate-400">Cancel</button><button type="submit" className="px-4 py-2 bg-amber-500 text-slate-950 rounded-xl text-xs font-black">Save Staff</button></div></form></div></div>}
 
       {showEditStaffModal && selectedStaff && <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center z-50 p-4"><div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-md"><h3 className="text-lg font-black text-white mb-4">Edit Staff</h3><form onSubmit={handleEditStaffSubmit} className="space-y-3"><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" value={selectedStaff.name || ''} onChange={e => setSelectedStaff({...selectedStaff,name:e.target.value})} required /><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Phone" value={selectedStaff.phone || ''} onChange={e => setSelectedStaff({...selectedStaff,phone:e.target.value})} /><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Role" value={selectedStaff.role || ''} onChange={e => setSelectedStaff({...selectedStaff,role:e.target.value})} /><input type="number" min="0" className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-emerald-400 font-bold" value={selectedStaff.monthlySalary || 0} onChange={e => setSelectedStaff({...selectedStaff,monthlySalary:e.target.value})} required /><input type="date" className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" value={String(selectedStaff.joiningDate || '').slice(0,10)} onChange={e => setSelectedStaff({...selectedStaff,joiningDate:e.target.value})} /><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={selectedStaff.active !== false} onChange={e => setSelectedStaff({...selectedStaff,active:e.target.checked})} /> Active Staff</label><div className="flex justify-end gap-2 pt-2"><button type="button" onClick={() => setShowEditStaffModal(false)} className="px-4 py-2 border border-slate-700 rounded-xl text-xs font-bold text-slate-400">Cancel</button><button type="submit" className="px-4 py-2 bg-amber-500 text-slate-950 rounded-xl text-xs font-black">Update Staff</button></div></form></div></div>}
@@ -4186,6 +4640,8 @@ function StaffTab({ staffList, onStaffUpdated }) {
       {showSalaryModal && selectedStaff && <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center z-50 p-4"><div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-md"><h3 className="text-lg font-black text-sky-300 mb-2">Salary Payment — {selectedStaff.name}</h3><div className="text-xs text-slate-400 mb-3">Total outstanding: <b className="text-rose-300">₹{Math.round(selectedStaffStats?.totalOutstanding || 0).toLocaleString()}</b></div><form onSubmit={handleSalaryPayment} className="space-y-3"><select className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" value={salaryForm.month} onChange={e => { const m=e.target.value; const ps=getPayrollForMonth(selectedStaff,m); setSalaryForm({...salaryForm,month:m,amount:String(Math.round(ps.remaining))}); }}>{monthKeysBetween(String(selectedStaff.joiningDate || '').slice(0,7) || selectedMonth, currentMonth).concat([currentMonth, selectedMonth, salaryForm.month]).filter((v,i,a)=>v && a.indexOf(v)===i).sort().map(m => <option key={m} value={m}>{new Date(`${m}-01T00:00:00`).toLocaleDateString('en-IN',{month:'long',year:'numeric'})}</option>)}</select><input type="date" className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" value={salaryForm.date} onChange={e => setSalaryForm({...salaryForm,date:e.target.value})} required /><input type="number" min="0" className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white font-bold" placeholder="Payment ₹" value={salaryForm.amount} onChange={e => setSalaryForm({...salaryForm,amount:e.target.value})} required /><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Remark" value={salaryForm.remark} onChange={e => setSalaryForm({...salaryForm,remark:e.target.value})} /><div className="flex justify-end gap-2"><button type="button" onClick={() => {setShowSalaryModal(false);setEditingSalaryPayment(null);}} className="px-4 py-2 border border-slate-700 rounded-xl text-xs font-bold text-slate-400">Cancel</button><button type="submit" className="px-4 py-2 bg-sky-500 text-white rounded-xl text-xs font-black">{editingSalaryPayment ? 'Update Payment' : 'Record Payment'}</button></div></form></div></div>}
 
       {showHistoryModal && historyStaff && <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center z-50 p-4"><div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto"><div className="flex items-center justify-between gap-3 mb-4"><div><h3 className="text-lg font-black text-white">Staff History — {historyStaff.name}</h3><p className="text-xs text-slate-500">Attendance, advances aur salary payments</p></div><button onClick={() => setShowHistoryModal(false)} className="text-slate-400 font-bold">✕</button></div><div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5"><div className="p-4 rounded-xl border border-amber-500/20 bg-amber-500/10"><div className="text-[10px] uppercase font-black text-amber-400">Previous Salary Due</div><div className="text-2xl font-black text-amber-300">₹{Math.round(getStaffStats(historyStaff).previousDue).toLocaleString()}</div></div><div className="p-4 rounded-xl border border-sky-500/20 bg-sky-500/10"><div className="text-[10px] uppercase font-black text-sky-400">Total Salary Paid</div><div className="text-2xl font-black text-sky-300">₹{Math.round(getStaffStats(historyStaff).allPaid).toLocaleString()}</div></div><div className="p-4 rounded-xl border border-rose-500/20 bg-rose-500/10"><div className="text-[10px] uppercase font-black text-rose-400">Total Outstanding</div><div className="text-2xl font-black text-rose-300">₹{Math.round(getStaffStats(historyStaff).totalOutstanding).toLocaleString()}</div></div></div><div className="mb-5"><h4 className="font-black text-white mb-2">Salary Month-wise</h4><div className="overflow-x-auto"><table className="w-full text-xs"><thead className="bg-slate-800/70 text-slate-400 uppercase"><tr><th className="p-2 text-left">Month</th><th className="p-2">Base</th><th className="p-2">Absent</th><th className="p-2">Half</th><th className="p-2">Advance</th><th className="p-2">Salary Due</th><th className="p-2">Paid</th><th className="p-2">Remaining</th></tr></thead><tbody className="divide-y divide-slate-800/60">{getStaffStats(historyStaff).previousBreakdown.concat([getPayrollForMonth(historyStaff,selectedMonth)]).filter((x,i,a)=>a.findIndex(y=>y.month===x.month)===i).map(x => <tr key={x.month}><td className="p-2 text-left font-bold text-white">{new Date(`${x.month}-01T00:00:00`).toLocaleDateString('en-IN',{month:'short',year:'numeric'})}</td><td className="p-2 text-center">₹{Math.round(x.baseSalary).toLocaleString()}</td><td className="p-2 text-center text-rose-300">{x.absent}</td><td className="p-2 text-center text-amber-300">{x.half}</td><td className="p-2 text-center text-purple-300">₹{Math.round(x.advances).toLocaleString()}</td><td className="p-2 text-center">₹{Math.round(x.netPayable).toLocaleString()}</td><td className="p-2 text-center text-sky-300">₹{Math.round(x.paid).toLocaleString()}</td><td className="p-2 text-center font-black text-rose-300">₹{Math.round(x.remaining).toLocaleString()}</td></tr>)}</tbody></table></div></div><div className="mb-5">
+      
+  
   <h4 className="font-black text-white mb-2">Advance History</h4>
 
   <div className="space-y-2">
@@ -4232,7 +4688,8 @@ function StaffTab({ staffList, onStaffUpdated }) {
       ))
     )}
   </div>
-</div><div><h4 className="font-black text-white mb-2">Salary Payment History</h4><div className="space-y-2">{salaryPayments.filter(p=>String(p.staffId)===String(historyStaff._id)).length===0 ? <div className="text-xs text-slate-500">No salary payment found.</div> : salaryPayments.filter(p=>String(p.staffId)===String(historyStaff._id)).map(p=><div key={p._id} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800"><div><div className="text-xs font-bold text-white">{p.month} • {p.date}</div><div className="text-[10px] text-slate-500">{p.remark || 'Salary Payment'}</div></div><div className="flex items-center gap-3"><span className="font-black text-sky-300">₹{Number(p.amount||0).toLocaleString()}</span><button onClick={()=>openSalaryPayment(historyStaff,p)} className="text-amber-400 text-[10px] font-black">Edit</button><button onClick={()=>handleDeleteSalaryPayment(p)} className="text-rose-400 text-[10px] font-black">Delete</button></div></div>)}</div></div></div></div>}
+</div>
+<div><h4 className="font-black text-white mb-2">Salary Payment History</h4><div className="space-y-2">{salaryPayments.filter(p=>String(p.staffId)===String(historyStaff._id)).length===0 ? <div className="text-xs text-slate-500">No salary payment found.</div> : salaryPayments.filter(p=>String(p.staffId)===String(historyStaff._id)).map(p=><div key={p._id} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800"><div><div className="text-xs font-bold text-white">{p.month} • {p.date}</div><div className="text-[10px] text-slate-500">{p.remark || 'Salary Payment'}</div></div><div className="flex items-center gap-3"><span className="font-black text-sky-300">₹{Number(p.amount||0).toLocaleString()}</span><button onClick={()=>openSalaryPayment(historyStaff,p)} className="text-amber-400 text-[10px] font-black">Edit</button><button onClick={()=>handleDeleteSalaryPayment(p)} className="text-rose-400 text-[10px] font-black">Delete</button></div></div>)}</div></div></div></div>}
     </div>
   );
 }
@@ -4423,37 +4880,58 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
         </h3>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1">Article Code *</label>
-            <SearchableBillingDropdown
-              value={form.articleId || form.articleCode}
-              onChange={handleArticleDropdownChange}
-              placeholder="Search / choose Article Code..."
-              options={articles.map((a) => ({
-                value: a._id || String(a.articleCode || '').toUpperCase(),
-                label: `${String(a.articleCode || '').toUpperCase()} • ${a.sizeRange || ''} • ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}`
-              }))}
-              allowCustomValue
-              customValueLabel="Use new Article Code"
-              className="w-full"
-            />
-            {editingArticleId && (
-  <button
-    type="button"
-    onClick={handleCreateNewVariant}
-    className="mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-black"
-  >
-    + Create New Variant
-  </button>
-)}
-            <input
-              tabIndex={-1}
-              aria-hidden="true"
-              className="sr-only"
-              value={form.articleCode}
-              onChange={() => {}}
-              required
-            />
-          </div>
+  <label className="block text-xs font-bold text-slate-300 mb-1">
+    Article Code *
+  </label>
+
+  {editingArticleId ? (
+    <input
+      type="text"
+      value={form.articleCode || ''}
+      onChange={(e) =>
+        setForm((prev) => ({
+          ...prev,
+          articleCode: e.target.value.toUpperCase()
+        }))
+      }
+      placeholder="Enter Article Code"
+      required
+      className="w-full p-2.5 bg-slate-800 border border-amber-500 rounded-xl text-sm text-white uppercase font-bold"
+    />
+  ) : (
+    <SearchableBillingDropdown
+      value={form.articleId || form.articleCode}
+      onChange={handleArticleDropdownChange}
+      placeholder="Search / choose Article Code..."
+      options={articles.map((a) => ({
+        value: a._id || String(a.articleCode || '').toUpperCase(),
+        label: `${String(a.articleCode || '').toUpperCase()} • ${a.sizeRange || ''} • ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}`
+      }))}
+      allowCustomValue
+      customValueLabel="Use new Article Code"
+      className="w-full"
+    />
+  )}
+
+  {editingArticleId && (
+    <button
+      type="button"
+      onClick={handleCreateNewVariant}
+      className="mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-black"
+    >
+      + Create New Variant
+    </button>
+  )}
+
+  <input
+    tabIndex={-1}
+    aria-hidden="true"
+    className="sr-only"
+    value={form.articleCode}
+    onChange={() => {}}
+    required
+  />
+</div>
           <div className="grid grid-cols-2 gap-2">
             <div><label className="block text-xs font-bold text-slate-300 mb-1">Brand Name</label><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Campus, Sparx" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} /></div>
             <div><label className="block text-xs font-bold text-slate-300 mb-1">Color</label><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white" placeholder="Black, Tan" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} /></div>
