@@ -1350,11 +1350,11 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center justify-between"><h3 className="text-sm font-black text-amber-300">Sale Items</h3><button type="button" onClick={addSale} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">+ Add Item</button></div>
+            <div className="flex items-center justify-between"><h3 className="text-sm font-black text-amber-300">Sale Items</h3></div>
             <div className="overflow-x-auto border border-slate-800 rounded-2xl">
               <table className="w-full text-left text-xs"><thead className="bg-slate-800/70 text-slate-300"><tr><th className="p-3">Article</th><th className="p-3">Size</th><th className="p-3">Color</th><th className="p-3">Pairs</th><th className="p-3">MRP</th><th className="p-3">Disc %</th><th className="p-3">Rate</th><th className="p-3">Amount</th><th className="p-3"></th></tr></thead>
                 <tbody className="divide-y divide-slate-800">{items.map((item, i) => <tr key={i}>
-                  <td className="p-2">{item.isCustom ? <div className="flex gap-1"><input value={item.articleCode} onChange={(e) => updateSale(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-amber-300 font-bold" /><button type="button" onClick={() => updateSale(i, 'articleCode', '')} className="text-xs text-slate-400">✕</button></div> : <SearchableBillingDropdown value={item.articleId || item.articleCode} onChange={(value) => updateSale(i, 'articleCode', value)} placeholder="Search article..." className="w-40" allowCustomValue={true} customValueLabel="Use Custom Article" options={[{ value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }, ...safeArticles.map((a) => ({ value: a._id || a.articleCode, label: `${String(a.articleCode || '').toUpperCase()} • ${a.sizeRange || ''} • ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}` }))]} />}</td>
+                  <td className="p-2">{item.isCustom ? <div className="flex gap-1"><input value={item.articleCode} onChange={(e) => updateSale(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-amber-300 font-bold" /><button type="button" onClick={() => updateSale(i, 'articleCode', '')} className="text-xs text-slate-400">✕</button></div> : <SearchableBillingDropdown value={item.articleId || item.articleCode} onChange={(value) => updateSale(i, 'articleCode', value)} placeholder="Search article..." className="w-40" allowCustomValue={true} customValueLabel="Use Custom Article" options={[{ value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }, ...safeArticles.map((a) => ({ value: a._id || a.articleCode, label: `${String(a.articleCode || '').toUpperCase()} • ${a.brand || 'N/A'} • MRP ₹${Number(a.mrp || 0).toFixed(2)} • Size: ${a.sizeRange || 'N/A'}`, article: a }))]} renderOption={(option) => option.article ? (<div className="flex flex-col gap-1 py-0.5"><span className="font-black text-amber-300 text-sm">{String(option.article.articleCode || '').toUpperCase()}</span><span className="text-slate-300">{option.article.brand || 'N/A'}</span><span className="text-slate-400">MRP: ₹{Number(option.article.mrp || 0).toFixed(2)} <span className="px-1">·</span> Size: {option.article.sizeRange || 'N/A'}</span></div>) : option.label} />}</td>
                   <td className="p-2"><SearchableBillingDropdown value={item.size} onChange={(value) => handleSizeDropdownChange(i, value, false)} placeholder="Search size..." className="w-40" options={[...safeSizeRanges.map((x) => ({ value: x, label: x })), { value: 'EDIT_CUSTOM_SIZE_RANGE', label: '✏️ Edit Current Size...' }, { value: 'ADD_CUSTOM_SIZE_RANGE', label: '➕ Add Custom Size...' }]} /></td>
                   <td className="p-2"><input value={item.color} onChange={(e) => updateSale(i, 'color', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
                   <td className="p-2"><input type="text" inputMode="numeric" min="0" value={item.totalPairs} onChange={(e) => updateSale(i, 'totalPairs', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
@@ -1365,6 +1365,7 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
                 </tr>)}</tbody>
               </table>
             </div>
+            <button type="button" onClick={addSale} className="text-xs bg-slate-800 border border-slate-700 text-slate-200 px-3.5 py-2 rounded-xl font-bold">+ Add more item</button>
           </div>
 
           <div className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-black text-amber-300">Return Items</h3><button type="button" onClick={addReturn} className="px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs font-bold text-amber-300">+ Add Return Item</button></div>
@@ -2861,11 +2862,18 @@ useEffect(() => {
                           options={[
                             { value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' },
                             ...articles.map((a) => ({
-  value: a._id || a.articleCode,
-  label: `${String(a.articleCode || '').toUpperCase()} •  ${a.brand || 'N/A'} •  ${a.sizeRange || ''}  ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}`
-}))
-                            
+                              value: a._id || a.articleCode,
+                              label: `${String(a.articleCode || '').toUpperCase()} • ${a.brand || 'N/A'} • MRP ₹${Number(a.mrp || 0).toFixed(2)} • Size: ${a.sizeRange || 'N/A'}`,
+                              article: a
+                            }))
                           ]}
+                          renderOption={(option) => option.article ? (
+                            <div className="flex flex-col gap-1 py-0.5">
+                              <span className="font-black text-amber-300 text-sm">{String(option.article.articleCode || '').toUpperCase()}</span>
+                              <span className="text-slate-300">{option.article.brand || 'N/A'}</span>
+                              <span className="text-slate-400">MRP: ₹{Number(option.article.mrp || 0).toFixed(2)} <span className="px-1">·</span> Size: {option.article.sizeRange || 'N/A'}</span>
+                            </div>
+                          ) : option.label}
                         />
                       )}
                     </td>
