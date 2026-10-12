@@ -1276,6 +1276,23 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
     if (returnItems.some((item) => !String(item.articleCode || '').trim() || Number(item.totalPairs || 0) <= 0 || Number(item.rate || 0) <= 0)) {
       return notify('Return items me Article Code, Total Pairs aur Rate check karein.', 'error');
     }
+    const findDuplicateVariant = (rows) => {
+      const seen = new Set();
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i];
+        const code = String(row.articleCode || '').trim().toUpperCase();
+        const size = String(row.size || row.sizeRange || '').trim().toLowerCase();
+        const mrp = Number(Number(row.mrp || 0).toFixed(2));
+        const key = JSON.stringify([code, size, mrp]);
+        if (seen.has(key)) return { row: i + 1, code, size, mrp };
+        seen.add(key);
+      }
+      return null;
+    };
+    const duplicateSale = findDuplicateVariant(items);
+    if (duplicateSale) return notify(`Sale Item ${duplicateSale.row}: ${duplicateSale.code} / ${duplicateSale.size} / MRP ₹${duplicateSale.mrp.toFixed(2)} duplicate hai. Same Article + Size + MRP ek hi baar rakhein.`, 'error');
+    const duplicateReturn = findDuplicateVariant(returnItems);
+    if (duplicateReturn) return notify(`Return Item ${duplicateReturn.row}: ${duplicateReturn.code} / ${duplicateReturn.size} / MRP ₹${duplicateReturn.mrp.toFixed(2)} duplicate hai.`, 'error');
 
     setSaving(true);
     try {
@@ -2618,6 +2635,24 @@ useEffect(() => {
       'error'
     );
   }
+
+  const findDuplicateVariant = (rows) => {
+    const seen = new Set();
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const code = String(row.articleCode || '').trim().toUpperCase();
+      const size = String(row.size || row.sizeRange || '').trim().toLowerCase();
+      const mrp = Number(Number(row.mrp || 0).toFixed(2));
+      const key = JSON.stringify([code, size, mrp]);
+      if (seen.has(key)) return { row: i + 1, code, size, mrp };
+      seen.add(key);
+    }
+    return null;
+  };
+  const duplicateSale = findDuplicateVariant(items);
+  if (duplicateSale) return notify(`Item ${duplicateSale.row}: ${duplicateSale.code} / ${duplicateSale.size} / MRP ₹${duplicateSale.mrp.toFixed(2)} duplicate hai. Same Article + Size + MRP ek hi baar rakhein.`, 'error');
+  const duplicateReturn = findDuplicateVariant(returnItems);
+  if (duplicateReturn) return notify(`Return Item ${duplicateReturn.row}: ${duplicateReturn.code} / ${duplicateReturn.size} / MRP ₹${duplicateReturn.mrp.toFixed(2)} duplicate hai.`, 'error');
 
     const payload = {
       partyId: selectedParty,
@@ -4883,6 +4918,17 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const normalizedCode = String(form.articleCode || '').trim().toUpperCase();
+      const normalizedSize = String(form.sizeRange || '').trim().toLowerCase();
+      const normalizedMrp = Number(Number(form.mrp || 0).toFixed(2));
+      if (!normalizedCode || !normalizedSize) return notify('Article Code aur Size Range zaroori hain.', 'error');
+      const duplicateArticle = articles.some((a) =>
+        String(a._id || '') !== String(editingArticleId || '') &&
+        String(a.articleCode || '').trim().toUpperCase() === normalizedCode &&
+        String(a.sizeRange || '').trim().toLowerCase() === normalizedSize &&
+        Number(Number(a.mrp || 0).toFixed(2)) === normalizedMrp
+      );
+      if (duplicateArticle) return notify(`Duplicate Article Variant: ${normalizedCode} / ${form.sizeRange} / MRP ₹${normalizedMrp.toFixed(2)} pehle se maujood hai. MRP ya Size alag ho to save kar sakte hain.`, 'error');
       const url = editingArticleId ? `${API_BASE}/articles/${editingArticleId}` : `${API_BASE}/articles`;
       const method = editingArticleId ? 'PUT' : 'POST';
 
@@ -5217,6 +5263,17 @@ function StockInwardTab({ articles, stocks, sizeRanges, setSizeRanges, onStockUp
   const handleStockSubmit = async (e) => {
     e.preventDefault();
     try {
+      const normalizedCode = String(form.articleCode || '').trim().toUpperCase();
+      const normalizedSize = String(form.sizeRange || '').trim().toLowerCase();
+      const normalizedMrp = Number(Number(form.mrp || 0).toFixed(2));
+      if (!normalizedCode || !normalizedSize) return notify('Article Code aur Size Range zaroori hain.', 'error');
+      const duplicateStock = stocks.some((stock) =>
+        String(stock._id || '') !== String(editingStockId || '') &&
+        String(stock.articleCode || '').trim().toUpperCase() === normalizedCode &&
+        String(stock.sizeRange || '').trim().toLowerCase() === normalizedSize &&
+        Number(Number(stock.mrp || 0).toFixed(2)) === normalizedMrp
+      );
+      if (duplicateStock) return notify(`Duplicate Stock Variant: ${normalizedCode} / ${form.sizeRange} / MRP ₹${normalizedMrp.toFixed(2)} pehle se maujood hai. Existing stock entry ko edit karein ya size/MRP sahi karein.`, 'error');
       const url = editingStockId ? `${API_BASE}/stock/${editingStockId}` : `${API_BASE}/stock/inward`;
       const method = editingStockId ? 'PUT' : 'POST';
       const res = await apiFetch(url, {
