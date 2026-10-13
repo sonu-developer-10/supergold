@@ -496,8 +496,7 @@ useEffect(() => {
   const [sizeRanges, setSizeRanges] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(SIZE_RANGES_KEY) || 'null');
-      // An intentionally empty saved list is valid; do not silently restore deleted sizes.
-      return Array.isArray(saved) ? saved : DEFAULT_SIZE_RANGES;
+      return Array.isArray(saved) && saved.length ? saved : DEFAULT_SIZE_RANGES;
     } catch {
       return DEFAULT_SIZE_RANGES;
     }
@@ -587,9 +586,16 @@ useEffect(() => {
   //     console.log('PARTIES DATA:', d);
   //     setParties(Array.isArray(d) ? d : []);
   //   });
-  const fetchArticles = () => apiFetch(`${API_BASE}/articles`)
-    .then(r => r.json())
-    .then(d => setArticles(Array.isArray(d) ? d : []));
+  const fetchArticles = () => apiFetch(`${API_BASE}/articles`).then(r => r.json()).then(d => {
+    const list = Array.isArray(d) ? d : [];
+    setArticles(list);
+    // Any size already stored on an Article is also a valid master size.
+    setSizeRanges((current) => {
+      const base = Array.isArray(current) ? current : DEFAULT_SIZE_RANGES;
+      const articleSizes = list.map(a => String(a?.sizeRange || '').trim()).filter(Boolean);
+      return [...new Set([...base, ...articleSizes])];
+    });
+  });
   const fetchBills = () => apiFetch(`${API_BASE}/bills`).then(r => r.json()).then(d => setBills(Array.isArray(d) ? d : []));
   const fetchPartyPayments = async () => {
   try {
@@ -1074,6 +1080,91 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
     return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
   });
   const [saving, setSaving] = useState(false);
+  
+  // Edit Bill ka unique draft key — har bill ka alag draft
+  const EDIT_DRAFT_KEY = `supergold_edit_bill_draft_${bill._id}`;
+  const [editDraftRestored, setEditDraftRestored] = useState(false);
+
+  // Refresh ya dobara Edit Bill kholne par draft restore karein
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(EDIT_DRAFT_KEY);
+
+      if (saved) {
+        const draft = JSON.parse(saved);
+
+        if (String(draft.billId) === String(bill._id)) {
+          setSelectedParty(draft.selectedParty ?? String(bill.partyId || ''));
+          setItems(
+            Array.isArray(draft.items)
+              ? draft.items.map(item => ({ ...item }))
+              : (bill.items || []).map(normalizeSale)
+          );
+          setReturnItems(
+            Array.isArray(draft.returnItems)
+              ? draft.returnItems.map(item => ({ ...item }))
+              : (bill.returnItems || []).map(normalizeReturn)
+          );
+          setDiscountVal(draft.discountVal ?? String(Number(bill.discountVal || 0)));
+          setCashPaid(draft.cashPaid ?? String(Number(bill.cashPaid || 0)));
+          setOnlinePaid(draft.onlinePaid ?? String(Number(bill.onlinePaid || 0)));
+          setAdvancePaid(draft.advancePaid ?? String(Number(bill.advancePaid || 0)));
+          setDeliveryDate(
+            draft.deliveryDate ??
+            (bill.deliveryDate
+              ? new Date(bill.deliveryDate).toISOString().slice(0, 10)
+              : '')
+          );
+          setPreviousBalance(
+            draft.previousBalance ?? initialPreviousBalance
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Edit Bill draft restore failed:', error);
+    } finally {
+      setEditDraftRestored(true);
+    }
+  }, [EDIT_DRAFT_KEY]);
+
+  // Changes ko automatically localStorage mein save karein
+  useEffect(() => {
+    if (!editDraftRestored) return;
+
+    try {
+      localStorage.setItem(
+        EDIT_DRAFT_KEY,
+        JSON.stringify({
+          billId: bill._id,
+          selectedParty,
+          items,
+          returnItems,
+          discountVal,
+          cashPaid,
+          onlinePaid,
+          advancePaid,
+          deliveryDate,
+          previousBalance
+        })
+      );
+    } catch (error) {
+      console.error('Edit Bill draft save failed:', error);
+    }
+  }, [
+    editDraftRestored,
+    EDIT_DRAFT_KEY,
+    bill._id,
+    selectedParty,
+    items,
+    returnItems,
+    discountVal,
+    cashPaid,
+    onlinePaid,
+    advancePaid,
+    deliveryDate,
+    previousBalance
+  ]);
+
   const [showCustomSizeModal, setShowCustomSizeModal] = useState(false);
   const [customSizeInput, setCustomSizeInput] = useState('');
   const [editingCustomSize, setEditingCustomSize] = useState(null);
@@ -1116,14 +1207,40 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
         }
       }
 
-      if (field === 'mrp' || field === 'discountPercent') {
-        const mrpValue = field === 'mrp' ? value : next.mrp;
-        const discountValue = field === 'discountPercent' ? value : next.discountPercent;
-        const discount = discountValue === '' ? 0 : Math.max(0, Math.min(100, Number(discountValue || 0)));
-        next.mrp = mrpValue === '' ? '' : Math.max(0, Number(mrpValue));
-        next.discountPercent = discountValue === '' ? '' : discount;
-        if (next.mrp !== '') next.rate = Number((Number(next.mrp) * (1 - discount / 100)).toFixed(2));
-      }
+      
+if (field === 'mrp' || field === 'discountPercent') {
+  const mrpValue = String(
+    field === 'mrp' ? value : next.mrp ?? ''
+  );
+  const discountValue = String(
+    field === 'discountPercent' ? value : next.discountPercent ?? ''
+  );
+
+  // Typing ke dauran decimal ko string hi rakhein
+  next.mrp = mrpValue;
+  next.discountPercent = discountValue;
+
+  const mrpNumber = Number(mrpValue);
+  const discountNumber =
+    discountValue.trim() === '' ? 0 : Number(discountValue);
+
+  if (
+    mrpValue.trim() !== '' &&
+    Number.isFinite(mrpNumber) &&
+    Number.isFinite(discountNumber)
+  ) {
+    const safeMrp = Math.max(0, mrpNumber);
+    const safeDiscount = Math.max(
+      0,
+      Math.min(100, discountNumber)
+    );
+
+    next.rate = Number(
+      (safeMrp * (1 - safeDiscount / 100)).toFixed(2)
+    );
+  }
+}
+
 
       if (field === 'rate') next.rate = value === '' ? '' : Math.max(0, Number(value || 0));
       if (field === 'loosePairs' || field === 'totalPairs') {
@@ -1184,14 +1301,40 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
         }
       }
 
-      if (field === 'mrp' || field === 'discountPercent') {
-        const mrpValue = field === 'mrp' ? value : next.mrp;
-        const discountValue = field === 'discountPercent' ? value : next.discountPercent;
-        const discount = discountValue === '' ? 0 : Math.max(0, Math.min(100, Number(discountValue || 0)));
-        next.mrp = mrpValue === '' ? '' : Math.max(0, Number(mrpValue));
-        next.discountPercent = discountValue === '' ? '' : discount;
-        if (next.mrp !== '') next.rate = Number((Number(next.mrp) * (1 - discount / 100)).toFixed(2));
-      }
+      
+if (field === 'mrp' || field === 'discountPercent') {
+  const mrpValue = String(
+    field === 'mrp' ? value : next.mrp ?? ''
+  );
+  const discountValue = String(
+    field === 'discountPercent' ? value : next.discountPercent ?? ''
+  );
+
+  // Typing ke dauran decimal ko string hi rakhein
+  next.mrp = mrpValue;
+  next.discountPercent = discountValue;
+
+  const mrpNumber = Number(mrpValue);
+  const discountNumber =
+    discountValue.trim() === '' ? 0 : Number(discountValue);
+
+  if (
+    mrpValue.trim() !== '' &&
+    Number.isFinite(mrpNumber) &&
+    Number.isFinite(discountNumber)
+  ) {
+    const safeMrp = Math.max(0, mrpNumber);
+    const safeDiscount = Math.max(
+      0,
+      Math.min(100, discountNumber)
+    );
+
+    next.rate = Number(
+      (safeMrp * (1 - safeDiscount / 100)).toFixed(2)
+    );
+  }
+}
+
       if (field === 'rate') next.rate = value === '' ? '' : Math.max(0, Number(value || 0));
       if (field === 'totalPairs') {
         const orderItem = Number.isInteger(Number(next.orderItemIndex)) ? items[Number(next.orderItemIndex)] : null;
@@ -1229,20 +1372,18 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
     if (!newSize) return;
 
     if (editingCustomSize) {
-      // Edit in Edit Bill changes ONLY this bill line. Never rename the master
-      // size list or rewrite other existing bills.
-      const { idx, isReturn } = editingCustomSize;
+      const { idx, isReturn, oldSize } = editingCustomSize;
+      if (typeof setSizeRanges === 'function' && oldSize && oldSize !== newSize) {
+        setSizeRanges((current) => (Array.isArray(current) ? current.map((sz) => sz === oldSize ? newSize : sz) : [newSize]));
+      }
       if (isReturn) updateReturn(idx, 'size', newSize);
       else updateSale(idx, 'size', newSize);
     } else if (customSizeTarget) {
-      // Add is a separate operation: add to the shared list (if new), then
-      // assign it only to the selected row in this bill editor.
       const { idx, isReturn } = customSizeTarget;
       if (typeof setSizeRanges === 'function') {
         setSizeRanges((current) => {
           const list = Array.isArray(current) ? current : [];
-          return list.some((sz) => String(sz).trim().toLowerCase() === newSize.toLowerCase())
-            ? list : [...list, newSize];
+          return list.includes(newSize) ? list : [...list, newSize];
         });
       }
       if (isReturn) updateReturn(idx, 'size', newSize);
@@ -1276,23 +1417,6 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
     if (returnItems.some((item) => !String(item.articleCode || '').trim() || Number(item.totalPairs || 0) <= 0 || Number(item.rate || 0) <= 0)) {
       return notify('Return items me Article Code, Total Pairs aur Rate check karein.', 'error');
     }
-    const findDuplicateVariant = (rows) => {
-      const seen = new Set();
-      for (let i = 0; i < rows.length; i += 1) {
-        const row = rows[i];
-        const code = String(row.articleCode || '').trim().toUpperCase();
-        const size = String(row.size || row.sizeRange || '').trim().toLowerCase();
-        const mrp = Number(Number(row.mrp || 0).toFixed(2));
-        const key = JSON.stringify([code, size, mrp]);
-        if (seen.has(key)) return { row: i + 1, code, size, mrp };
-        seen.add(key);
-      }
-      return null;
-    };
-    const duplicateSale = findDuplicateVariant(items);
-    if (duplicateSale) return notify(`Sale Item ${duplicateSale.row}: ${duplicateSale.code} / ${duplicateSale.size} / MRP ₹${duplicateSale.mrp.toFixed(2)} duplicate hai. Same Article + Size + MRP ek hi baar rakhein.`, 'error');
-    const duplicateReturn = findDuplicateVariant(returnItems);
-    if (duplicateReturn) return notify(`Return Item ${duplicateReturn.row}: ${duplicateReturn.code} / ${duplicateReturn.size} / MRP ₹${duplicateReturn.mrp.toFixed(2)} duplicate hai.`, 'error');
 
     setSaving(true);
     try {
@@ -1320,8 +1444,12 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || data.message || 'Bill update failed');
       notify(`Bill #${bill.billNo} updated successfully!`);
-      await onSaved(data);
-      onClose();
+
+// Sirf successful update ke baad draft clear karein
+localStorage.removeItem(EDIT_DRAFT_KEY);
+
+await onSaved(data);
+onClose();
     } catch (err) {
       notify(err.message || 'Bill update failed', 'error');
     } finally {
@@ -1354,7 +1482,7 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
             <div className="overflow-x-auto border border-slate-800 rounded-2xl">
               <table className="w-full text-left text-xs"><thead className="bg-slate-800/70 text-slate-300"><tr><th className="p-3">Article</th><th className="p-3">Size</th><th className="p-3">Color</th><th className="p-3">Pairs</th><th className="p-3">MRP</th><th className="p-3">Disc %</th><th className="p-3">Rate</th><th className="p-3">Amount</th><th className="p-3"></th></tr></thead>
                 <tbody className="divide-y divide-slate-800">{items.map((item, i) => <tr key={i}>
-                  <td className="p-2">{item.isCustom ? <div className="flex gap-1"><input value={item.articleCode} onChange={(e) => updateSale(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-amber-300 font-bold" /><button type="button" onClick={() => updateSale(i, 'articleCode', '')} className="text-xs text-slate-400">✕</button></div> : <SearchableBillingDropdown value={item.articleId || item.articleCode} onChange={(value) => updateSale(i, 'articleCode', value)} placeholder="Search article..." className="w-40" allowCustomValue={true} customValueLabel="Use Custom Article" options={[{ value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }, ...safeArticles.map((a) => ({ value: a._id || a.articleCode, label: `${String(a.articleCode || '').toUpperCase()} • ${a.brand || 'N/A'} • MRP ₹${Number(a.mrp || 0).toFixed(2)} • Size: ${a.sizeRange || 'N/A'}`, article: a }))]} renderOption={(option) => option.article ? (<div className="flex flex-col gap-1 py-0.5"><span className="font-black text-amber-300 text-sm">{String(option.article.articleCode || '').toUpperCase()}</span><span className="text-slate-300">{option.article.brand || 'N/A'}</span><span className="text-slate-400">MRP: ₹{Number(option.article.mrp || 0).toFixed(2)} <span className="px-1">·</span> Size: {option.article.sizeRange || 'N/A'}</span></div>) : option.label} />}</td>
+                  <td className="p-2">{item.isCustom ? <div className="flex gap-1"><input value={item.articleCode} onChange={(e) => updateSale(i, 'articleCode', e.target.value.toUpperCase())} placeholder="Enter Article" className="w-32 p-2 bg-slate-800 border border-amber-500 rounded-lg text-amber-300 font-bold" /><button type="button" onClick={() => updateSale(i, 'articleCode', '')} className="text-xs text-slate-400">✕</button></div> : <SearchableBillingDropdown value={item.articleId || item.articleCode} onChange={(value) => updateSale(i, 'articleCode', value)} placeholder="Search article..." className="w-56" allowCustomValue={true} customValueLabel="Use Custom Article" options={[{ value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' }, ...safeArticles.map((a) => ({ value: a._id || a.articleCode, label: `${String(a.articleCode || '').toUpperCase()} • ${a.brand || 'N/A'} • ${a.sizeRange || ''} • MRP ₹${Number(a.mrp || 0).toFixed(2)} • Rate ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}` }))]} />}</td>
                   <td className="p-2"><SearchableBillingDropdown value={item.size} onChange={(value) => handleSizeDropdownChange(i, value, false)} placeholder="Search size..." className="w-40" options={[...safeSizeRanges.map((x) => ({ value: x, label: x })), { value: 'EDIT_CUSTOM_SIZE_RANGE', label: '✏️ Edit Current Size...' }, { value: 'ADD_CUSTOM_SIZE_RANGE', label: '➕ Add Custom Size...' }]} /></td>
                   <td className="p-2"><input value={item.color} onChange={(e) => updateSale(i, 'color', e.target.value)} className="w-24 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white" /></td>
                   <td className="p-2"><input type="text" inputMode="numeric" min="0" value={item.totalPairs} onChange={(e) => updateSale(i, 'totalPairs', e.target.value)} className="w-20 p-2 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold" /></td>
@@ -1365,7 +1493,9 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
                 </tr>)}</tbody>
               </table>
             </div>
-            <button type="button" onClick={addSale} className="text-xs bg-slate-800 border border-slate-700 text-slate-200 px-3.5 py-2 rounded-xl font-bold">+ Add more item</button>
+            <div>
+              <button type="button" onClick={addSale} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">+ Add Item</button>
+            </div>
           </div>
 
           <div className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-black text-amber-300">Return Items</h3><button type="button" onClick={addReturn} className="px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs font-bold text-amber-300">+ Add Return Item</button></div>
@@ -1387,7 +1517,7 @@ function EditBillModal({ bill, parties, articles, bills, sizeRanges, setSizeRang
           <div className="flex justify-end gap-3 pt-2 border-t border-slate-800"><button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold">Cancel</button><button type="button" disabled={saving} onClick={save} className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 text-slate-950 font-black disabled:opacity-60">{saving ? 'Saving...' : 'Save Bill Changes'}</button></div>
         </div>
       </div>
-      {showCustomSizeModal && <div className="fixed inset-0 z-[120] bg-black/70 flex items-center justify-center p-4"><div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl"><h3 className="text-lg font-black text-white mb-3">{editingCustomSize ? 'Edit Size for This Bill Item' : 'Add New Size Range'}</h3><input autoFocus value={customSizeInput} onChange={(e) => setCustomSizeInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddCustomSize(); }} placeholder="Example: 6*9 Premium" className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white" /><div className="flex justify-end gap-2 mt-4"><button type="button" onClick={() => setShowCustomSizeModal(false)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold">Cancel</button><button type="button" onClick={handleAddCustomSize} className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-black">Save Size</button></div></div></div>}
+      {showCustomSizeModal && <div className="fixed inset-0 z-[120] bg-black/70 flex items-center justify-center p-4"><div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl"><h3 className="text-lg font-black text-white mb-3">{editingCustomSize ? 'Edit Size Range' : 'Add Custom Size Range'}</h3><input autoFocus value={customSizeInput} onChange={(e) => setCustomSizeInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddCustomSize(); }} placeholder="Example: 6*9 Premium" className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-white" /><div className="flex justify-end gap-2 mt-4"><button type="button" onClick={() => setShowCustomSizeModal(false)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold">Cancel</button><button type="button" onClick={handleAddCustomSize} className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-black">Save Size</button></div></div></div>}
     </div>
   );
 }
@@ -2395,23 +2525,35 @@ useEffect(() => {
 
   const newSz = customSizeInput.trim();
 
-  if (editingCustomSize && String(editingCustomSize.oldSize || '').trim()) {
-    // Edit Current Size changes only the selected unsaved/current billing row.
-    // It must not rename the shared size master or alter existing saved bills.
-    const { idx, isReturn } = editingCustomSize;
-    if (isReturn) handleReturnItemChange(idx, 'size', newSz);
-    else handleItemChange(idx, 'size', newSz);
+  if (editingCustomSize) {
+    const { idx, isReturn, oldSize } = editingCustomSize;
+
+    if (oldSize && oldSize !== newSz) {
+      setSizeRanges(
+        sizeRanges.map((sz) => sz === oldSize ? newSz : sz)
+      );
+    }
+
+    if (isReturn) {
+      handleReturnItemChange(idx, 'size', newSz);
+    } else {
+      handleItemChange(idx, 'size', newSz);
+    }
   } else {
-    // Add New Size adds a separate master option; it does not rename any old size.
     setSizeRanges((current) => {
       const list = Array.isArray(current) ? current : [];
-      return list.some((sz) => String(sz).trim().toLowerCase() === newSz.toLowerCase())
-        ? list : [...list, newSz];
+      return list.includes(newSz) ? list : [...list, newSz];
     });
+
+    // When adding a brand-new size, immediately assign it to the row
+    // from which the custom-size dialog was opened.
     const { idx, isReturn } = editingCustomSize || {};
     if (Number.isInteger(idx)) {
-      if (isReturn) handleReturnItemChange(idx, 'size', newSz);
-      else handleItemChange(idx, 'size', newSz);
+      if (isReturn) {
+        handleReturnItemChange(idx, 'size', newSz);
+      } else {
+        handleItemChange(idx, 'size', newSz);
+      }
     }
   }
 
@@ -2637,24 +2779,6 @@ useEffect(() => {
     );
   }
 
-  const findDuplicateVariant = (rows) => {
-    const seen = new Set();
-    for (let i = 0; i < rows.length; i += 1) {
-      const row = rows[i];
-      const code = String(row.articleCode || '').trim().toUpperCase();
-      const size = String(row.size || row.sizeRange || '').trim().toLowerCase();
-      const mrp = Number(Number(row.mrp || 0).toFixed(2));
-      const key = JSON.stringify([code, size, mrp]);
-      if (seen.has(key)) return { row: i + 1, code, size, mrp };
-      seen.add(key);
-    }
-    return null;
-  };
-  const duplicateSale = findDuplicateVariant(items);
-  if (duplicateSale) return notify(`Item ${duplicateSale.row}: ${duplicateSale.code} / ${duplicateSale.size} / MRP ₹${duplicateSale.mrp.toFixed(2)} duplicate hai. Same Article + Size + MRP ek hi baar rakhein.`, 'error');
-  const duplicateReturn = findDuplicateVariant(returnItems);
-  if (duplicateReturn) return notify(`Return Item ${duplicateReturn.row}: ${duplicateReturn.code} / ${duplicateReturn.size} / MRP ₹${duplicateReturn.mrp.toFixed(2)} duplicate hai.`, 'error');
-
     const payload = {
       partyId: selectedParty,
       partyName: partyInfo ? partyInfo.name : '',
@@ -2854,26 +2978,18 @@ useEffect(() => {
                         <SearchableBillingDropdown
                           value={item.articleId || item.articleCode}
                           onChange={(value) => handleItemChange(idx, 'articleCode', value)}
-                          displaySelectedLabel={true}
                           placeholder="Search article..."
-                          className="md:w-40 w-32"
+                          className="md:w-64 w-56"
                           allowCustomValue
                           customValueLabel="Use new Article Code"
                           options={[
                             { value: 'ADD_CUSTOM_ARTICLE', label: '✍️ Enter Custom Article Code...' },
                             ...articles.map((a) => ({
-                              value: a._id || a.articleCode,
-                              label: `${String(a.articleCode || '').toUpperCase()} • ${a.brand || 'N/A'} • MRP ₹${Number(a.mrp || 0).toFixed(2)} • Size: ${a.sizeRange || 'N/A'}`,
-                              article: a
-                            }))
+  value: a._id || a.articleCode,
+  label: `${String(a.articleCode || '').toUpperCase()} • ${a.brand || 'N/A'} • ${a.sizeRange || ''} • MRP ₹${Number(a.mrp || 0).toFixed(2)} • Rate ₹${Number(a.sellingPrice || a.wholesaleRate || 0).toFixed(2)}`
+}))
+                            
                           ]}
-                          renderOption={(option) => option.article ? (
-                            <div className="flex flex-col gap-1 py-0.5">
-                              <span className="font-black text-amber-300 text-sm">{String(option.article.articleCode || '').toUpperCase()}</span>
-                              <span className="text-slate-300">{option.article.brand || 'N/A'}</span>
-                              <span className="text-slate-400">MRP: ₹{Number(option.article.mrp || 0).toFixed(2)} <span className="px-1">·</span> Size: {option.article.sizeRange || 'N/A'}</span>
-                            </div>
-                          ) : option.label}
                         />
                       )}
                     </td>
@@ -3168,7 +3284,7 @@ useEffect(() => {
       {showCustomSizeModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center z-50 p-4">
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
-            <h3 className="text-lg font-black text-white mb-3">{editingCustomSize && String(editingCustomSize.oldSize || "").trim() ? "Edit Size for This Item" : "Add New Size Range"}</h3>
+            <h3 className="text-lg font-black text-white mb-3">Add Custom Size Range</h3>
             <input className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white font-bold mb-4" placeholder="e.g. 2*5 (Kids)" value={customSizeInput} onChange={(e) => setCustomSizeInput(e.target.value)} />
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowCustomSizeModal(false)} className="px-4 py-2 border border-slate-700 rounded-xl text-xs font-bold text-slate-400">Cancel</button>
@@ -4743,8 +4859,6 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
   const [isCreatingVariant, setIsCreatingVariant] = useState(false);
   const articleFormRef = useRef(null);
   const [showCustomSizeModal, setShowCustomSizeModal] = useState(false);
-  const [editingMasterSize, setEditingMasterSize] = useState('');
-  const [masterSizeInput, setMasterSizeInput] = useState('');
   const [paymentBill, setPaymentBill] = useState(null);
   const [deliveryCash, setDeliveryCash] = useState('');
   const [deliveryOnline, setDeliveryOnline] = useState('');
@@ -4804,78 +4918,12 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
   };
 
   const handleAddCustomSize = () => {
-    const newSz = String(customSizeInput || '').trim();
-    if (!newSz) {
-      notify('Size Range enter karein.', 'error');
-      return;
-    }
-    const existing = sizeRanges.find((sz) => String(sz).trim().toLowerCase() === newSz.toLowerCase());
-    if (existing) {
-      // Selecting an existing option is not an edit/rename operation.
-      setForm((current) => ({ ...current, sizeRange: existing }));
-      notify('Yeh Size Range pehle se maujood hai; existing size select kar diya.', 'info');
-    } else {
-      setSizeRanges((current) => [...(Array.isArray(current) ? current : []), newSz]);
-      setForm((current) => ({ ...current, sizeRange: newSz }));
-      notify('Naya Size Range add ho gaya.', 'success');
-    }
+    if (!customSizeInput.trim()) return;
+    const newSz = customSizeInput.trim();
+    if (!sizeRanges.includes(newSz)) setSizeRanges([...sizeRanges, newSz]);
+    setForm({ ...form, sizeRange: newSz });
     setCustomSizeInput('');
     setShowCustomSizeModal(false);
-  };
-
-  // Master-list edits are intentionally blocked when a size is used by an article or stock.
-  // This keeps article variants, inventory, and historical bills unchanged.
-  const normalizeSizeRange = (value) => String(value || '').trim().toLowerCase();
-  const isSizeRangeInUse = (size) => {
-    const target = normalizeSizeRange(size);
-    return articles.some((a) => normalizeSizeRange(a.sizeRange) === target) ||
-      stocks.some((stock) => normalizeSizeRange(stock.sizeRange) === target);
-  };
-
-  const handleSaveMasterSize = async (oldSize) => {
-    const newSize = String(masterSizeInput || '').trim();
-    if (!newSize) {
-      notify('Size Range khaali nahi ho sakta.', 'error');
-      return;
-    }
-    if (normalizeSizeRange(oldSize) === normalizeSizeRange(newSize)) {
-      setEditingMasterSize('');
-      setMasterSizeInput('');
-      return;
-    }
-    if (isSizeRangeInUse(oldSize)) {
-      notify('Yeh size saved article ya stock mein use ho raha hai. Data safety ke liye pehle variant/stock ko alag se update karein.', 'error');
-      return;
-    }
-    if (sizeRanges.some((size) => normalizeSizeRange(size) === normalizeSizeRange(newSize))) {
-      notify('Yeh Size Range pehle se maujood hai.', 'error');
-      return;
-    }
-    setSizeRanges((current) => current.map((size) =>
-      normalizeSizeRange(size) === normalizeSizeRange(oldSize) ? newSize : size
-    ));
-    setEditingMasterSize('');
-    setMasterSizeInput('');
-    notify('Size Range update ho gaya. Existing bills unchanged hain.', 'success');
-  };
-
-  const handleDeleteMasterSize = async (size) => {
-    if (isSizeRangeInUse(size)) {
-      notify('Yeh size saved article ya stock mein use ho raha hai. Data safe rakhne ke liye delete nahi kiya gaya.', 'error');
-      return;
-    }
-    const confirmed = await confirm(`Kya "${size}" ko Size Range master list se delete karna hai? Existing bills par koi change nahi hoga.`, {
-      title: 'Delete Size Range', confirmText: 'Delete', tone: 'danger'
-    });
-    if (!confirmed) return;
-    setSizeRanges((current) => current.filter((item) =>
-      normalizeSizeRange(item) !== normalizeSizeRange(size)
-    ));
-    if (normalizeSizeRange(editingMasterSize) === normalizeSizeRange(size)) {
-      setEditingMasterSize('');
-      setMasterSizeInput('');
-    }
-    notify('Size Range master list se delete ho gaya. Existing bills unchanged hain.', 'success');
   };
 
   const handleCreateNewVariant = () => {
@@ -4926,17 +4974,6 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const normalizedCode = String(form.articleCode || '').trim().toUpperCase();
-      const normalizedSize = String(form.sizeRange || '').trim().toLowerCase();
-      const normalizedMrp = Number(Number(form.mrp || 0).toFixed(2));
-      if (!normalizedCode || !normalizedSize) return notify('Article Code aur Size Range zaroori hain.', 'error');
-      const duplicateArticle = articles.some((a) =>
-        String(a._id || '') !== String(editingArticleId || '') &&
-        String(a.articleCode || '').trim().toUpperCase() === normalizedCode &&
-        String(a.sizeRange || '').trim().toLowerCase() === normalizedSize &&
-        Number(Number(a.mrp || 0).toFixed(2)) === normalizedMrp
-      );
-      if (duplicateArticle) return notify(`Duplicate Article Variant: ${normalizedCode} / ${form.sizeRange} / MRP ₹${normalizedMrp.toFixed(2)} pehle se maujood hai. MRP ya Size alag ho to save kar sakte hain.`, 'error');
       const url = editingArticleId ? `${API_BASE}/articles/${editingArticleId}` : `${API_BASE}/articles`;
       const method = editingArticleId ? 'PUT' : 'POST';
 
@@ -5060,32 +5097,6 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
               {sizeRanges.map((sz, idx) => <option key={idx} value={sz}>{sz}</option>)}
               <option value="ADD_CUSTOM_SIZE_RANGE" className="bg-amber-900 text-amber-200 font-bold">➕ + Add Custom Size...</option>
             </select>
-            <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <span className="text-[11px] font-black uppercase tracking-wide text-slate-300">Manage Size Ranges</span>
-                <span className="text-[10px] text-slate-500">{sizeRanges.length} sizes</span>
-              </div>
-              <div className="max-h-48 overflow-y-auto space-y-2">
-                {sizeRanges.length === 0 ? <div className="text-xs text-slate-500">No size ranges saved.</div> : sizeRanges.map((sz) => (
-                  <div key={sz} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2">
-                    {normalizeSizeRange(editingMasterSize) === normalizeSizeRange(sz) ? (
-                      <>
-                        <input value={masterSizeInput} onChange={(e) => setMasterSizeInput(e.target.value)} className="min-w-0 flex-1 p-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white" aria-label={`Edit ${sz}`} />
-                        <button type="button" onClick={() => handleSaveMasterSize(sz)} className="text-[10px] font-black text-emerald-400">Save</button>
-                        <button type="button" onClick={() => { setEditingMasterSize(''); setMasterSizeInput(''); }} className="text-[10px] font-bold text-slate-400">Cancel</button>
-                      </>
-                    ) : (
-                      <>
-                        <span className="min-w-0 flex-1 break-words text-xs text-slate-200">{sz}</span>
-                        <button type="button" onClick={() => { setEditingMasterSize(sz); setMasterSizeInput(sz); }} className="text-[10px] font-black text-amber-400">Edit</button>
-                        <button type="button" onClick={() => handleDeleteMasterSize(sz)} className="text-[10px] font-black text-rose-400">Delete</button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-slate-500">Safety: size used by a saved article or stock cannot be renamed/deleted here. Existing bills are never rewritten by this master-list tool.</p>
-            </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div><label className="block text-xs font-bold text-slate-300 mb-1">MRP (₹)</label><input className="w-full p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white font-bold" type="number" placeholder="0" value={form.mrp} onChange={(e) => { const mrp = e.target.value; const n = Number(mrp || 0); setForm({ ...form, mrp, purchaseRate: n > 0 && form.purchaseDiscountPercent !== '' ? Number((n * (1 - Number(form.purchaseDiscountPercent || 0) / 100)).toFixed(2)) : form.purchaseRate, sellingPrice: n > 0 && form.sellingDiscountPercent !== '' ? Number((n * (1 - Number(form.sellingDiscountPercent || 0) / 100)).toFixed(2)) : form.sellingPrice, wholesaleRate: n > 0 && form.sellingDiscountPercent !== '' ? Number((n * (1 - Number(form.sellingDiscountPercent || 0) / 100)).toFixed(2)) : form.wholesaleRate }); }} /></div>
@@ -5174,7 +5185,7 @@ function ArticlesTab({ articles, stocks, sizeRanges, setSizeRanges, onArticleAdd
       {showCustomSizeModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center z-50 p-4">
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm">
-            <h3 className="text-lg font-black text-white mb-3">Add New Size Range</h3>
+            <h3 className="text-lg font-black text-white mb-3">Add Custom Size Range</h3>
             <input className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white font-bold mb-4" placeholder="e.g. 2*5 (Kids)" value={customSizeInput} onChange={(e) => setCustomSizeInput(e.target.value)} />
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowCustomSizeModal(false)} className="px-4 py-2 border border-slate-700 rounded-xl text-xs font-bold text-slate-400">Cancel</button>
@@ -5271,17 +5282,6 @@ function StockInwardTab({ articles, stocks, sizeRanges, setSizeRanges, onStockUp
   const handleStockSubmit = async (e) => {
     e.preventDefault();
     try {
-      const normalizedCode = String(form.articleCode || '').trim().toUpperCase();
-      const normalizedSize = String(form.sizeRange || '').trim().toLowerCase();
-      const normalizedMrp = Number(Number(form.mrp || 0).toFixed(2));
-      if (!normalizedCode || !normalizedSize) return notify('Article Code aur Size Range zaroori hain.', 'error');
-      const duplicateStock = stocks.some((stock) =>
-        String(stock._id || '') !== String(editingStockId || '') &&
-        String(stock.articleCode || '').trim().toUpperCase() === normalizedCode &&
-        String(stock.sizeRange || '').trim().toLowerCase() === normalizedSize &&
-        Number(Number(stock.mrp || 0).toFixed(2)) === normalizedMrp
-      );
-      if (duplicateStock) return notify(`Duplicate Stock Variant: ${normalizedCode} / ${form.sizeRange} / MRP ₹${normalizedMrp.toFixed(2)} pehle se maujood hai. Existing stock entry ko edit karein ya size/MRP sahi karein.`, 'error');
       const url = editingStockId ? `${API_BASE}/stock/${editingStockId}` : `${API_BASE}/stock/inward`;
       const method = editingStockId ? 'PUT' : 'POST';
       const res = await apiFetch(url, {
