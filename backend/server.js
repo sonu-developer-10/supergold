@@ -16,7 +16,8 @@ const registerPartyPaymentRoutes = require('./routes/party-payment.routes');
 
 const app = express();
 app.use(helmet());
-app.use(cors({
+
+const corsOptions = {
   origin: [
     'https://supergold.onrender.com',
     'http://localhost:5173',
@@ -25,11 +26,12 @@ app.use(cors({
     'http://localhost:5176'
   ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
 
-app.options('*', cors());
+app.use(cors(corsOptions));
 app.use(express.json());
+
 
 // Public authentication route.
 registerPublicAuthRoutes(app);
