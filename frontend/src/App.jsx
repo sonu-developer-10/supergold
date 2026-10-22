@@ -1527,7 +1527,7 @@ function AdminDashboard({ bills, partyPayments, parties, stocks, articles, sizeR
   const notify = useToast();
   const confirm = useConfirm();
   const [timeFilter, setTimeFilter] = useState(
-  'LAST_7_DAYS'
+  'ALL'
 );
   const [editingBillId, setEditingBillId] = useState(null);
   const [billEditForm, setBillEditForm] = useState({ todayTotal: 0, amountPaid: 0, dueBalance: 0, cashPaid: 0, onlinePaid: 0 });
@@ -1647,7 +1647,7 @@ const totalReceived = totalCash + totalOnline;
           </h3>
           <div className="flex gap-2">
             {(userRole === 'special_staff'
-  ? ['LAST_7_DAYS']
+  ? ['ALL']
   : ['ALL', 'WEEK', 'MONTH', 'YEAR', 'LAST_7_DAYS']
 ).map((f) => (
               <button
