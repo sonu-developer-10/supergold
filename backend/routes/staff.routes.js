@@ -267,6 +267,42 @@ function registerRoutes(app) {
       res.json(leave);
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
+
+  // Admin can correct a wrongly entered leave (dates / reason / status).
+  app.put('/api/staff-leaves/:id', async (req, res) => {
+    try {
+      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required.' });
+      const existing = await StaffLeave.findById(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Leave not found.' });
+      const startDate = String(req.body.startDate ?? existing.startDate).slice(0, 10);
+      const endDate = String(req.body.endDate ?? existing.endDate).slice(0, 10);
+      const reason = req.body.reason !== undefined ? String(req.body.reason || '').trim() : existing.reason;
+      const status = req.body.status ?? existing.status;
+      if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) return res.status(400).json({ error: 'Valid leave dates are required.' });
+      if (!['Pending', 'Approved', 'Rejected'].includes(status)) return res.status(400).json({ error: 'Invalid leave status.' });
+      if (status !== 'Rejected') {
+        const overlap = await StaffLeave.findOne({ _id: { $ne: existing._id }, staffId: existing.staffId, status: { $in: ['Pending', 'Approved'] }, startDate: { $lte: endDate }, endDate: { $gte: startDate } });
+        if (overlap) return res.status(409).json({ error: 'Is date range mein pehle se pending/approved leave maujood hai.' });
+      }
+      const set = { startDate, endDate, reason };
+      if (status !== existing.status) {
+        set.status = status;
+        set.reviewedBy = status === 'Pending' ? '' : (req.user.username || 'Admin');
+        set.reviewedAt = status === 'Pending' ? null : new Date();
+      }
+      const leave = await StaffLeave.findByIdAndUpdate(existing._id, { $set: set }, { new: true, runValidators: true });
+      res.json(leave);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.delete('/api/staff-leaves/:id', async (req, res) => {
+    try {
+      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required.' });
+      const deleted = await StaffLeave.findByIdAndDelete(req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'Leave not found.' });
+      res.json({ message: 'Leave deleted' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
 }
 
 module.exports = registerRoutes;

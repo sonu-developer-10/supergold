@@ -4324,6 +4324,8 @@ function StaffTab({ staffList, onStaffUpdated, userRole }) {
 const [showLeaveModal, setShowLeaveModal] = useState(false);
 const [leaveSubmitting, setLeaveSubmitting] = useState(false);
 const [reviewingLeaveId, setReviewingLeaveId] = useState('');
+const [editingLeave, setEditingLeave] = useState(null);
+const [deletingLeaveId, setDeletingLeaveId] = useState('');
 
 const [leaveForm, setLeaveForm] = useState({
   staffId: '',
@@ -4429,10 +4431,13 @@ const submitLeaveRequest = async () => {
   setLeaveSubmitting(true);
 
   try {
-    const res = await apiFetch(`${API_BASE}/staff-leaves`, {
-      method: 'POST',
+    const isEditingLeave = Boolean(editingLeave?._id);
+    const res = await apiFetch(isEditingLeave ? `${API_BASE}/staff-leaves/${editingLeave._id}` : `${API_BASE}/staff-leaves`, {
+      method: isEditingLeave ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(leaveForm)
+      body: JSON.stringify(isEditingLeave
+        ? { startDate: leaveForm.startDate, endDate: leaveForm.endDate, reason: leaveForm.reason, status: leaveForm.status }
+        : leaveForm)
     });
 
     const data = await res.json().catch(() => ({}));
@@ -4443,6 +4448,7 @@ const submitLeaveRequest = async () => {
     }
 
     setShowLeaveModal(false);
+    setEditingLeave(null);
     setLeaveForm({
       staffId: '',
       startDate: getToday(),
@@ -4452,7 +4458,7 @@ const submitLeaveRequest = async () => {
     });
 
     await loadMonthData();
-    notify(leaveForm.entryMode === 'Direct' ? 'Leave directly mark ho gayi.' : 'Leave request save ho gayi.', 'success');
+    notify(isEditingLeave ? 'Leave update ho gayi.' : (leaveForm.entryMode === 'Direct' ? 'Leave directly mark ho gayi.' : 'Leave request save ho gayi.'), 'success');
   } catch (err) {
     console.error('Submit leave request error:', err);
     notify('Leave request save nahi hui. Network/API error check karo.', 'error');
@@ -4508,6 +4514,42 @@ const reviewLeaveRequest = async (leaveId, status) => {
     notify('Leave update nahi hui. Network ya server error check karo.', 'error');
   } finally {
     setReviewingLeaveId('');
+  }
+};
+
+const openEditLeave = (leave) => {
+  setEditingLeave(leave);
+  setLeaveForm({
+    staffId: String(leave.staffId?._id || leave.staffId || ''),
+    startDate: String(leave.startDate || '').slice(0, 10),
+    endDate: String(leave.endDate || '').slice(0, 10),
+    reason: leave.reason || '',
+    status: leave.status || 'Pending',
+    entryMode: leave.entryMode || 'Request'
+  });
+  setShowLeaveModal(true);
+};
+
+const closeLeaveModal = () => {
+  setShowLeaveModal(false);
+  setEditingLeave(null);
+};
+
+const handleDeleteLeave = async (leave) => {
+  if (!leave?._id || deletingLeaveId) return;
+  const confirmed = await confirm('Ye leave entry delete karni hai? Salary calculation me se bhi hat jayegi.', { title: 'Delete Leave', confirmText: 'Delete', tone: 'danger' });
+  if (!confirmed) return;
+  setDeletingLeaveId(leave._id);
+  try {
+    const res = await apiFetch(`${API_BASE}/staff-leaves/${leave._id}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { notify(data.error || data.message || 'Leave delete nahi hui.', 'error'); return; }
+    await loadMonthData();
+    notify('Leave delete ho gayi.', 'success');
+  } catch (err) {
+    notify('Leave delete nahi hui. Network ya server error check karo.', 'error');
+  } finally {
+    setDeletingLeaveId('');
   }
 };
 
@@ -4917,6 +4959,7 @@ const reviewLeaveRequest = async (leaveId, status) => {
 <button
   type="button"
   onClick={() => {
+    setEditingLeave(null);
     setLeaveForm({
       staffId: '',
       startDate: getToday(),
@@ -4930,7 +4973,7 @@ const reviewLeaveRequest = async (leaveId, status) => {
 >
   + Leave Request
 </button>
-{userRole === 'admin' && <button type="button" onClick={() => { setLeaveForm({ staffId: '', startDate: getToday(), endDate: getToday(), reason: '', entryMode: 'Direct' }); setShowLeaveModal(true); }} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">✓ Direct Mark Leave</button>}
+{userRole === 'admin' && <button type="button" onClick={() => { setEditingLeave(null); setLeaveForm({ staffId: '', startDate: getToday(), endDate: getToday(), reason: '', entryMode: 'Direct' }); setShowLeaveModal(true); }} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">✓ Direct Mark Leave</button>}
     </div>
 
     {staffLeaves.length === 0 ? (
@@ -4999,6 +5042,12 @@ const reviewLeaveRequest = async (leaveId, status) => {
 ) : (
   <span className="text-slate-500">Reviewed</span>
 )}
+{userRole === 'admin' && (
+  <div className="flex flex-wrap gap-2 mt-2">
+    <button type="button" onClick={() => openEditLeave(leave)} className="px-3 py-1 rounded-md bg-slate-800 border border-amber-500/30 text-amber-400 text-xs font-semibold">Edit</button>
+    <button type="button" disabled={deletingLeaveId === leave._id} onClick={() => handleDeleteLeave(leave)} className="px-3 py-1 rounded-md bg-slate-800 border border-rose-500/30 text-rose-400 text-xs font-semibold disabled:opacity-50">{deletingLeaveId === leave._id ? 'Deleting...' : 'Delete'}</button>
+  </div>
+)}
                   </td>
                 </tr>
               );
@@ -5027,7 +5076,7 @@ const reviewLeaveRequest = async (leaveId, status) => {
       <div className="flex items-center justify-between gap-3 mb-5">
         <div>
           <h3 className="text-lg font-black text-white">
-            {leaveForm.entryMode === 'Direct' ? 'Directly Mark Staff Leave' : 'Create Leave Request'}
+            {editingLeave ? 'Edit Staff Leave' : (leaveForm.entryMode === 'Direct' ? 'Directly Mark Staff Leave' : 'Create Leave Request')}
           </h3>
           <p className="text-xs text-slate-400 mt-1">
             Staff aur leave ki dates select karo.
@@ -5037,7 +5086,7 @@ const reviewLeaveRequest = async (leaveId, status) => {
         <button
           type="button"
           disabled={leaveSubmitting}
-          onClick={() => setShowLeaveModal(false)}
+          onClick={closeLeaveModal}
           className="text-slate-400 hover:text-white text-2xl disabled:opacity-50"
         >
           ×
@@ -5061,11 +5110,12 @@ const reviewLeaveRequest = async (leaveId, status) => {
             onChange={(e) =>
               setLeaveForm({ ...leaveForm, staffId: e.target.value })
             }
-            className="w-full rounded-lg bg-slate-800 border border-slate-700 text-white p-3"
+            className="w-full rounded-lg bg-slate-800 border border-slate-700 text-white p-3 disabled:opacity-60"
             required
+            disabled={Boolean(editingLeave)}
           >
             <option value="">Select staff</option>
-            {staffList.filter(staff => staff.active !== false).map((staff) => (
+            {staffList.filter(staff => staff.active !== false || String(staff._id) === String(leaveForm.staffId)).map((staff) => (
               <option key={staff._id} value={staff._id}>
                 {staff.name}
               </option>
@@ -5124,11 +5174,26 @@ const reviewLeaveRequest = async (leaveId, status) => {
           />
         </div>
 
+        {editingLeave && (
+          <div>
+            <label className="block text-sm text-slate-300 mb-1">Status</label>
+            <select
+              value={leaveForm.status || 'Pending'}
+              onChange={(e) => setLeaveForm({ ...leaveForm, status: e.target.value })}
+              className="w-full rounded-lg bg-slate-800 border border-slate-700 text-white p-3"
+            >
+              <option value="Pending">Pending</option>
+              <option value="Approved">Approved</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+          </div>
+        )}
+
         <div className="flex justify-end gap-3 pt-2">
           <button
             type="button"
             disabled={leaveSubmitting}
-            onClick={() => setShowLeaveModal(false)}
+            onClick={closeLeaveModal}
             className="px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
           >
             Cancel
@@ -5139,7 +5204,7 @@ const reviewLeaveRequest = async (leaveId, status) => {
             disabled={leaveSubmitting}
             className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold disabled:opacity-50"
           >
-            {leaveSubmitting ? 'Saving...' : (leaveForm.entryMode === 'Direct' ? 'Mark Approved Leave' : 'Save Request')}
+            {leaveSubmitting ? 'Saving...' : (editingLeave ? 'Update Leave' : (leaveForm.entryMode === 'Direct' ? 'Mark Approved Leave' : 'Save Request'))}
           </button>
         </div>
       </form>
