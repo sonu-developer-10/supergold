@@ -1,0 +1,19 @@
+SuperGold Advanced ERP v5 - Mobile Billing Update
+
+Changes included:
+1. Party + article + size pricing now checks the most recent successfully saved bill line first.
+2. If no previous bill line exists, the existing party-specific fixed-rate/discount rule is used; otherwise the normal wholesale rate is used.
+3. Staff can freely edit the rate in billing. No role permission or approval gate is added.
+4. The submitted rate is honored by the server instead of being overwritten by a party rule during save.
+5. A manually entered rate becomes the latest rate only after the bill saves successfully. Failed/draft bills do not affect future pricing.
+6. Mobile billing uses stacked product cards instead of the wide desktop table, avoiding horizontal scrolling for sale items.
+7. Mobile quantity has a numeric keypad and quick +/- controls. Color, MRP and discount remain available under product details.
+8. Desktop billing table remains available at desktop widths.
+
+Validation performed:
+- Backend QA: LEDGER_INVARIANTS_OK
+- Backend route syntax: ROUTES_SYNTAX_OK
+- Frontend JSX parse: no diagnostics
+- Full Vite production build was not run because dependency installation timed out in this environment.
+
+No database reset or migration is required. Existing stored bill lines are used to derive latest rates.
