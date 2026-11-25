@@ -1,0 +1,50 @@
+SUPER GOLD ERP - COMPLETE CHECKED SOURCE
+
+This package is based on the latest uploaded server(5).js and App(4).js.
+Only authentication/access/session corrections were made. Existing ERP page
+structure and the existing business routes/components were retained.
+
+ACCESS:
+- Admin: full ERP access + Login Users account management.
+- Special Staff: Billing + Parties + Staff & Expenses.
+- Normal Staff: Staff Billing only (with the party/article reads needed by billing).
+
+IMPORTANT FIXES:
+1. The frontend uses "special_staff"; the backend now uses the same role.
+2. Older accounts stored with the earlier "manager" role are migrated to
+   "special_staff" automatically after MongoDB connects.
+3. A fresh session version is generated every time server.js starts. Any token
+   from a previous server process is rejected, so restarting the backend requires
+   login again.
+4. The existing frontend /auth/me check clears stale login storage after restart.
+5. Node DNS uses 8.8.8.8 and 1.1.1.1 for the MongoDB SRV lookup workaround.
+6. The MongoDB database is explicitly "wholesale_erp" in .env.example.
+7. No real MongoDB password is included in this package.
+
+SETUP:
+1. Copy backend/.env.example to backend/.env.
+2. Put your real MongoDB username/password in MONGO_URI.
+3. Keep the database path:
+   /wholesale_erp
+4. Do NOT add ?appName=Cluster0 to the URI with the driver/version you are
+   currently using.
+5. Set a strong AUTH_SECRET.
+6. Run the backend from the backend folder:
+   node server.js
+7. Use the existing React project/build setup and replace its App.js with
+   frontend/App.js. Put public/supergold-logo.png in the frontend public folder.
+
+NOTE:
+If your existing project already has package.json/node_modules and build
+configuration, keep those files. This package intentionally does not invent
+or replace your project's dependency versions.
+
+
+SESSION:
+- Automatic logout after 30 minutes without user activity.
+- Mouse, click, keyboard, scroll and touch count as activity.
+- Backend also enforces the 30-minute idle limit.
+- Normal Staff now has a visible Logout button in the Staff Billing Terminal.
+- Special Staff opens the control panel rather than the Normal Staff terminal.
+- Any old staff-billing hash is cleared when a new login succeeds.
+- Server restart still invalidates all old tokens.

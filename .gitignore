@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+dist/
+.vite/
+
+# Local automatic database backups
+backend/backups/
